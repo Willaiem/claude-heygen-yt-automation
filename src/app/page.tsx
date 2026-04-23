@@ -1,0 +1,57 @@
+"use client";
+
+import { useState } from "react";
+import { AvatarSelector } from "@/components/AvatarSelector";
+import { NicheSelector } from "@/components/NicheSelector";
+import { FaceUploader } from "@/components/FaceUploader";
+import { UrlInput } from "@/components/UrlInput";
+import { ResultsTable } from "@/components/ResultsTable";
+import type { HeyGenAvatar, Job } from "@/lib/types";
+
+export default function Home() {
+  const [selectedAvatar, setSelectedAvatar] = useState<HeyGenAvatar | null>(
+    null,
+  );
+  const [selectedNiche, setSelectedNiche] = useState("health");
+  const [faceImagePath, setFaceImagePath] = useState<string | null>(null);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  const handleGenerate = async (urls: string[]) => {
+    if (!selectedAvatar || urls.length === 0) return;
+    setIsGenerating(true);
+    // TODO: POST /api/generate, connect SSE in Phase 5
+    setIsGenerating(false);
+  };
+
+  return (
+    <main className="mx-auto max-w-6xl px-4 py-8">
+      <h1 className="mb-8 text-2xl font-bold tracking-tight">
+        YT Automation Pipeline
+      </h1>
+
+      {/* ── Config bar ─────────────────────────────────── */}
+      <section className="mb-8 flex flex-wrap items-end gap-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+        <AvatarSelector
+          selected={selectedAvatar}
+          onSelect={setSelectedAvatar}
+        />
+        <NicheSelector selected={selectedNiche} onSelect={setSelectedNiche} />
+        <FaceUploader onUploaded={setFaceImagePath} />
+      </section>
+
+      {/* ── URL input ──────────────────────────────────── */}
+      <section className="mb-8">
+        <UrlInput
+          onGenerate={handleGenerate}
+          disabled={!selectedAvatar || isGenerating}
+        />
+      </section>
+
+      {/* ── Results table ──────────────────────────────── */}
+      <section>
+        <ResultsTable jobs={jobs} />
+      </section>
+    </main>
+  );
+}

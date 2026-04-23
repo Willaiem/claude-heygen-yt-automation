@@ -32,22 +32,22 @@
 
 ## Phase 0: Scaffolding
 
-- [ ] Move Remotion files to `remotion/` subfolder with own `package.json`
-- [ ] Initialize Next.js at root (TypeScript, Tailwind, App Router, src dir)
-- [ ] Create directories: `output/videos/`, `output/thumbnails/`, `public/references/`
-- [ ] Create `.env.local` with placeholder keys
-- [ ] Update `.gitignore` (`output/`, `public/references/*`, `.env.local`)
-- [ ] Define shared types in `src/lib/types.ts`
+- [x] Move Remotion files to `remotion/` subfolder with own `package.json`
+- [x] Initialize Next.js at root (TypeScript, Tailwind, App Router, src dir)
+- [x] Create directories: `output/videos/`, `output/thumbnails/`, `public/references/`
+- [x] Create `.env.local` with placeholder keys
+- [x] Update `.gitignore` (`output/`, `public/references/*`, `.env.local`)
+- [x] Define shared types in `src/lib/types.ts`
 
 ## Phase 1: UI Shell
 
-- [ ] `layout.tsx` — minimal root layout
-- [ ] `page.tsx` — three-section layout (config bar | URL input | results table)
-- [ ] `AvatarSelector.tsx` — dropdown, fetches from HeyGen API
-- [ ] `NicheSelector.tsx` — dropdown (health, politics)
-- [ ] `FaceUploader.tsx` — file upload with preview, persists to disk
-- [ ] `UrlInput.tsx` — multi-line textarea + Generate button
-- [ ] `ResultsTable.tsx` — status, thumbnail preview, copy buttons, download, resubmit
+- [x] `layout.tsx` — minimal root layout
+- [x] `page.tsx` — three-section layout (config bar | URL input | results table)
+- [x] `AvatarSelector.tsx` — dropdown, fetches from HeyGen API
+- [x] `NicheSelector.tsx` — dropdown (health, politics)
+- [x] `FaceUploader.tsx` — file upload with preview, persists to disk
+- [x] `UrlInput.tsx` — multi-line textarea + Generate button
+- [x] `ResultsTable.tsx` — status, thumbnail preview, copy buttons, download, resubmit
 
 ## Phase 2: Foundation API Routes
 

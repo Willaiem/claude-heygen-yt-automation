@@ -2,6 +2,18 @@ node_modules
 dist
 .DS_Store
 .env
+.env.local
 
-# Ignore the output video from Git but not videos you import into src/.
+# Next.js
+.next/
+out/
+
+# Remotion output
 out
+
+# Pipeline output
+output/
+
+# Uploaded face images (user-specific)
+public/references/*
+!public/references/.gitkeep
