@@ -1,9 +1,11 @@
 "use server";
 
-import type { HeyGenAvatar } from "@/lib/types";
+import {
+  HeyGenAvatarListResponseSchema,
+  type HeyGenAvatar,
+} from "@/lib/types";
 
-// HeyGen signs preview/face URLs with an Expires query param (~7 days).
-// A short TTL keeps the list snappy but well ahead of signature expiry.
+// Signed HeyGen URLs expire after ~7 days — TTL must stay well below that.
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
 interface CacheEntry {
@@ -14,23 +16,6 @@ interface CacheEntry {
 const globalWithCache = globalThis as typeof globalThis & {
   __avatarsCache?: CacheEntry;
 };
-
-interface HeyGenAvatarGroup {
-  id: string;
-  name: string;
-  preview_image: string | null;
-  default_voice_id: string | null;
-  photo_identity_s3_url: string | null;
-}
-
-interface HeyGenAvatarGroupListResponse {
-  code: number;
-  data?: {
-    avatar_groups?: HeyGenAvatarGroup[];
-  };
-  msg?: string | null;
-  message?: string | null;
-}
 
 export async function getAvatars(): Promise<HeyGenAvatar[]> {
   const cached = globalWithCache.__avatarsCache;
@@ -52,18 +37,12 @@ export async function getAvatars(): Promise<HeyGenAvatar[]> {
     throw new Error(`HeyGen responded ${res.status}`);
   }
 
-  const body = (await res.json()) as HeyGenAvatarGroupListResponse;
+  const body = HeyGenAvatarListResponseSchema.parse(await res.json());
   if (body.code !== 100 || !body.data?.avatar_groups) {
     throw new Error(body.message ?? body.msg ?? "Unexpected HeyGen response");
   }
 
-  const avatars: HeyGenAvatar[] = body.data.avatar_groups.map((g) => ({
-    avatar_id: g.id,
-    avatar_name: g.name,
-    preview_image_url: g.preview_image ?? "",
-    voice_id: g.default_voice_id ?? undefined,
-    face_image_url: g.photo_identity_s3_url ?? undefined,
-  }));
+  const avatars = body.data.avatar_groups;
 
   globalWithCache.__avatarsCache = {
     data: avatars,

@@ -31,9 +31,9 @@ export function AvatarSelector({ selected, onSelect }: Props) {
       <label className="text-xs font-medium text-zinc-400">Avatar</label>
       <select
         className="rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-500"
-        value={selected?.avatar_id ?? ""}
+        value={selected?.avatarId ?? ""}
         onChange={(e) => {
-          const avatar = avatars.find((a) => a.avatar_id === e.target.value);
+          const avatar = avatars.find((a) => a.avatarId === e.target.value);
           onSelect(avatar ?? null);
         }}
         disabled={loading}
@@ -42,8 +42,8 @@ export function AvatarSelector({ selected, onSelect }: Props) {
           {loading ? "Loading..." : error ? "Error loading" : "Select avatar"}
         </option>
         {avatars.map((a) => (
-          <option key={a.avatar_id} value={a.avatar_id}>
-            {a.avatar_name}
+          <option key={a.avatarId} value={a.avatarId}>
+            {a.avatarName}
           </option>
         ))}
       </select>

@@ -444,7 +444,7 @@ fetch("https://api2.heygen.com/v1/pacific/collaboration/video.download/status?wo
 {"code":100,"data":{"workflow_id":"7bf5a2b8854e43ba9aa52ac1a251ba4c-e793c09e-a6ea-46b0-96a1-ed9dfe24298a_1080p_nocap","status":"COMPLETED","download_url":"https://resource2.heygen.ai/video/transcode/7bf5a2b8854e43ba9aa52ac1a251ba4c/ve793c09e-a6ea-46b0-96a1-ed9dfe24298a/720x1280_nocap.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27Avatar%2520Video_1080p.mp4%3B"},"msg":null,"message":null}
 ```
 
-- [x] `getAvatars()` server action (`src/app/actions.ts`) — fetches `api2.heygen.com/v2/avatar_group.private.list` (cookie auth), maps groups → `HeyGenAvatar[]` including `face_image_url` from `photo_identity_s3_url`, caches via `globalThis` with 5-minute TTL (signed S3 URLs). **Server actions preferred over route handlers** for RPC-style calls; route handlers reserved for streaming (SSE) and binary responses.
+- [x] `getAvatars()` server action (`src/app/actions.ts`) — fetches `api2.heygen.com/v2/avatar_group.private.list` (cookie auth), parses + camelCases via a zod schema with `.transform()` (snake_case → `HeyGenAvatar` DTO, `faceImageUrl` from `photo_identity_s3_url`), caches via `globalThis` with 5-minute TTL (signed S3 URLs). **Server actions preferred over route handlers** for RPC-style calls; route handlers reserved for streaming (SSE) and binary responses.
 - [x] Wire `AvatarSelector` to `getAvatars()` action
 - ~~`POST /api/upload-face` — multipart form → `public/references/`~~ **REMOVED**: face image is read off the selected avatar's `photo_identity_s3_url`, no user upload needed
 - ~~Wire `FaceUploader` to `/api/upload-face`~~ **REMOVED** with the uploader
@@ -458,7 +458,7 @@ fetch("https://api2.heygen.com/v1/pacific/collaboration/video.download/status?wo
 - [ ] `src/lib/pipeline/heygen-submit.ts` — POST `/v2/video/generate`
 - [ ] `src/lib/pipeline/heygen-poll.ts` — 30s interval polling
 - [ ] `src/lib/pipeline/download-video.ts` — fetch MP4 → `output/videos/`
-- [ ] `src/lib/pipeline/generate-thumbnail.ts` — ChatGPT `gpt-4o` with face ref (from avatar's `face_image_url`) + competitor thumbnail
+- [ ] `src/lib/pipeline/generate-thumbnail.ts` — ChatGPT `gpt-4o` with face ref (from avatar's `faceImageUrl`) + competitor thumbnail
 - [ ] `src/lib/niches.ts` — niche configs (health, politics)
 
 ## Phase 4: Queue + Orchestration
@@ -542,7 +542,7 @@ claude-heygen-yt-automation/
 - Niches: `{ id, name, promptTone, defaultTags }` in config file
 - No database — in-memory state, lost on restart
 - Thumbnail face matching via `gpt-4o` chat completions with image inputs
-- Face image for thumbnail generation is pulled from the selected HeyGen avatar's `photo_identity_s3_url` (exposed as `face_image_url` on `HeyGenAvatar`). No user-upload surface — the avatar already is the face.
+- Face image for thumbnail generation is pulled from the selected HeyGen avatar's `photo_identity_s3_url` (exposed as `faceImageUrl` on `HeyGenAvatar`, camelCased at the boundary via zod). No user-upload surface — the avatar already is the face.
 - HeyGen avatar list uses the private `api2.heygen.com/v2/avatar_group.private.list` endpoint with cookie auth (not the public API-key endpoint), because it returns `photo_identity_s3_url` and `default_voice_id` directly.
 
 ## Risks

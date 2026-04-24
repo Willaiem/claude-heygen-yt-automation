@@ -18,7 +18,7 @@ export default function Home() {
   const handleGenerate = async (urls: string[]) => {
     if (!selectedAvatar || urls.length === 0) return;
     setIsGenerating(true);
-    // TODO: POST /api/generate, connect SSE in Phase 5
+    // TODO(phase 5): call generate() action, subscribe to SSE progress
     setIsGenerating(false);
   };
 
@@ -28,7 +28,6 @@ export default function Home() {
         YT Automation Pipeline
       </h1>
 
-      {/* ── Config bar ─────────────────────────────────── */}
       <section className="mb-8 flex flex-wrap items-end gap-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
         <AvatarSelector
           selected={selectedAvatar}
@@ -37,7 +36,6 @@ export default function Home() {
         <NicheSelector selected={selectedNiche} onSelect={setSelectedNiche} />
       </section>
 
-      {/* ── URL input ──────────────────────────────────── */}
       <section className="mb-8">
         <UrlInput
           onGenerate={handleGenerate}
@@ -45,7 +43,6 @@ export default function Home() {
         />
       </section>
 
-      {/* ── Results table ──────────────────────────────── */}
       <section>
         <ResultsTable jobs={jobs} />
       </section>

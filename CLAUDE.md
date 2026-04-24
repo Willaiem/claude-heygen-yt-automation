@@ -42,19 +42,24 @@ The repo is a local-only batch processor that turns YouTube URLs into avatar-nar
 
 - **HeyGen avatar list uses private `api2.heygen.com` endpoints with cookie auth, not the public `api.heygen.com` API-key endpoints.** The private endpoint returns `photo_identity_s3_url` and `default_voice_id`, which the public API doesn't. The cookie string lives in `HEYGEN_COOKIE` (env). See the HEYGEN API REFERENCE block in `ROADMAP.md` for the exact request/response shapes — the roadmap is the source of truth for these reverse-engineered endpoints.
 - **Avatar URLs are signed S3 links with ~7-day Expires params.** Any cache of the avatars response must use a short TTL (current value: 5 minutes in the `getAvatars` action in `src/app/actions.ts`). Never cache indefinitely.
-- **Face image is the selected avatar's `photo_identity_s3_url`, surfaced on `HeyGenAvatar.face_image_url`.** There is no user-upload surface (there used to be, it was removed). Thumbnail generation reads the face off the avatar.
+- **Face image is the selected avatar's `photo_identity_s3_url`, surfaced on `HeyGenAvatar.faceImageUrl`.** There is no user-upload surface (there used to be, it was removed). Thumbnail generation reads the face off the avatar.
+- **HeyGen responses are parsed and normalized to camelCase at the boundary via zod.** The schemas live in `src/lib/types.ts` and the `HeyGenAvatar` DTO type is `z.infer`'d from the schema's `.transform()` output — schema is the single source of truth, so the runtime validator and compile-time type cannot drift. `src/app/actions.ts` just imports `HeyGenAvatarListResponseSchema` and calls `.parse`; no downstream code ever sees the raw snake_case shape.
 - **Claude CLI prompt is piped via stdin, not passed as a CLI arg.** Windows `cmd` has a ~32k-char argv limit and prompts are much longer than that. Use `child_process.spawn("claude", ["-p", "--output-format", "json"])` and write the prompt to `stdin`.
 - **Claude CLI output may be wrapped in markdown code blocks.** Parser in `spawn-claude.ts` should strip fences before `JSON.parse`. The JSON shape is `{ script, title, tags, description }`.
-- **Voice is coupled to avatar** — no separate voice selector. `voice_id` comes from the avatar's `default_voice_id`.
+- **Voice is coupled to avatar** — no separate voice selector. `voiceId` on the DTO comes from the avatar group's `default_voice_id`.
 - **Niches (`src/lib/niches.ts`)** are plain config objects: `{ id, name, promptTone, defaultTags }`. Add a new niche by adding an entry; the UI picks up `id`/`name` automatically.
 
 ### Shared types
 
-All cross-boundary types live in `src/lib/types.ts`. Notable shapes:
+All cross-boundary types live in `src/lib/types.ts`. **Every exported type is `z.infer`'d from a zod schema in the same file — schema is the source of truth, types are derived. Edit the schema, never the type.** Boundary schemas (HeyGen payload, SSE wire, `GenerateRequest`) are expected to be `.parse()`'d where data enters the system; internal schemas (`Job`, `Batch`, `NicheConfig`) exist so the shape is declared once and available for validation if/when needed. Notable shapes:
 - `Job` — carries everything produced along the pipeline; progresses through `PipelineStep` enum values
 - `Batch` — one "Generate" click; references its jobs and the selected avatar/voice/niche
 - `SSEEvent` — wire format for `/api/progress`
-- `HeyGenAvatar` — `{ avatar_id, avatar_name, preview_image_url, voice_id?, face_image_url? }`
+- `HeyGenAvatar` — `{ avatarId, avatarName, previewImageUrl, voiceId?, faceImageUrl? }` (inferred from `HeyGenAvatarGroupSchema`)
+
+## Code style
+
+- **Default to no comments.** Keep a comment only when the WHY isn't obvious from the code itself — math, regex, hidden invariants, workarounds for specific bugs, subtle constraints a reader would otherwise miss. Strip anything that restates WHAT the code does, describes structure that's already visible, or references a past task/PR. If removing the comment wouldn't confuse a careful reader, delete it. This applies to existing comments too — when editing a file, prune excessive commentary you come across.
 
 ## Workflow
 
