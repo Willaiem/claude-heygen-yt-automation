@@ -471,12 +471,13 @@ fetch("https://api2.heygen.com/v1/pacific/collaboration/video.download/status?wo
 
 ## Phase 5: Wire Frontend
 
-- [ ] `src/hooks/useSSE.ts` — `EventSource` wrapper hook
-- [ ] Connect Generate button → `generate()` action
-- [ ] Connect `ResultsTable` to SSE progress stream
-- [ ] Copy-to-clipboard for title, tags, description
-- [ ] Download links for MP4s
-- [ ] Thumbnail previews in results table
+- [x] `src/hooks/useSSE.ts` — `EventSource` wrapper hook; takes `(batchId, initialJobs)`, resets state when `batchId` changes, parses events through `SSEEventSchema`, merges `job_update` patches onto the local jobs array, closes on `batch_complete`.
+- [x] Connect Generate button → `generate()` action — `page.tsx` now holds `batchId` + `seedJobs` state, calls the action, seeds jobs with `progress: 0`, and derives `isRunning` from `useSSE` to disable the button while a batch is in flight. Inline error surfaced under the URL input on action throw.
+- [x] Connect `ResultsTable` to SSE progress stream — `page.tsx` passes `useSSE`'s live `jobs` array straight into `ResultsTable`.
+- [x] Copy-to-clipboard for title, tags, description — already in `ResultsTable` from Phase 1.
+- [x] Download links for MP4s — `ResultsTable` now links to `/api/file?path=…&download=1`.
+- [x] Thumbnail previews in results table — `ResultsTable` `<img src>` now goes through `/api/file?path=…` (inline, no `download=1`).
+- [x] `src/app/api/file/route.ts` — generic file server for anything under `output/`. Added instead of the originally planned `api/download-video/route.ts` because thumbnails live in `output/thumbnails/` too and needed HTTP access. Directory-traversal protection via `path.relative(OUTPUT_DIR, absolute)`; content-type by extension (`.mp4`, `.png`, `.jpg`, `.webp`); `download=1` query flips to `Content-Disposition: attachment`.
 
 ## Phase 6: Polish
 
@@ -509,7 +510,7 @@ claude-heygen-yt-automation/
 │   │   ├── actions.ts            # server actions: getAvatars, generate, resubmit
 │   │   └── api/
 │   │       ├── progress/route.ts       # SSE — actions can't stream
-│   │       └── download-video/route.ts # binary file response
+│   │       └── file/route.ts           # binary file response (mp4/png under output/)
 │   ├── components/
 │   │   ├── AvatarSelector.tsx
 │   │   ├── NicheSelector.tsx
@@ -534,6 +535,103 @@ claude-heygen-yt-automation/
 │       └── useSSE.ts
 ```
 
+---
+
+## ChatGPT API Reference
+
+- Init conversation with image upload mode
+
+```js
+fetch("https://chatgpt.com/backend-api/conversation/init", {
+  "headers": {
+    "authorization": "Bearer <CHATGPT_BEARER_TOKEN>",
+  },
+  "body": "{\"gizmo_id\":null,\"requested_default_model\":null,\"conversation_id\":null,\"timezone_offset_min\":-120,\"system_hints\":[\"picture_v2\"]}",
+  "method": "POST"
+});
+
+{"type":"conversation_detail_metadata","banner_info":null,"blocked_features":[],"model_limits":[],"limits_progress":[{"feature_name":"deep_research","remaining":25,"reset_after":"2026-05-24T11:48:56.168582+00:00"},{"feature_name":"odyssey","remaining":40,"reset_after":"2026-05-24T11:48:56.168602+00:00"},{"feature_name":"file_upload","remaining":80,"reset_after":"2026-04-24T14:48:56.168610+00:00"},{"feature_name":"paste_text_to_file","remaining":80,"reset_after":"2026-04-24T14:48:56.168615+00:00"},{"feature_name":"image_gen","remaining":118,"reset_after":"2026-04-25T11:31:36.168619+00:00"}],"default_model_slug":"gpt-5-3","atlas_mode_enabled":null}
+```
+
+
+- Upload image to conversation (event streaming)
+
+```js
+fetch("https://chatgpt.com/backend-api/files/process_upload_stream", {
+  "headers": {
+    "accept": "*/*",
+    "authorization": "Bearer <CHATGPT_BEARER_TOKEN>",
+  },
+  "body": "{\"file_id\":\"file_00000000c95872438079af5ed8c76efa\",\"use_case\":\"multimodal\",\"index_for_retrieval\":false,\"file_name\":\"Zrzut ekranu 2026-04-19 o 21.19.26 (2).png\",\"entry_surface\":\"chat_composer\"}",
+  "method": "POST"
+});
+
+{"file_id":"file_00000000c95872438079af5ed8c76efa","event":"file.processing.started","message":"Start processing file: file_00000000c95872438079af5ed8c76efa","progress":0.0,"extra":null}
+{"file_id":"file_00000000c95872438079af5ed8c76efa","event":"file.processing.file_ready","message":"File file_00000000c95872438079af5ed8c76efa is ready to download","progress":100.0,"extra":null}
+{"file_id":"file_00000000c95872438079af5ed8c76efa","event":"file.processing.completed","message":"Succeeded processing file file_00000000c95872438079af5ed8c76efa","progress":100.0,"extra":null}
+```
+
+- Send message in conversation (event streaming)
+```js
+fetch("https://chatgpt.com/backend-api/f/conversation", {
+  "headers": {
+    "accept": "text/event-stream",
+    "authorization": "Bearer <CHATGPT_BEARER_TOKEN>",
+  },
+  "body": "{\"action\":\"next\",\"messages\":[{\"id\":\"7bb36944-1457-4894-bf98-c96d4660f4f0\",\"author\":{\"role\":\"user\"},\"create_time\":1777031850.159,\"content\":{\"content_type\":\"multimodal_text\",\"parts\":[{\"content_type\":\"image_asset_pointer\",\"asset_pointer\":\"sediment://file_000000006be47243ad29ebb5c32b6818\",\"size_bytes\":1090917,\"width\":2048,\"height\":1152},\"change text to:\\nNASR*ŁEM NA\\nWYCIERACZKĘ\"]},\"metadata\":{\"attachments\":[{\"id\":\"file_000000006be47243ad29ebb5c32b6818\",\"size\":1090917,\"name\":\"de4b1605-0da1-4548-b86c-bd04c3aa24b4.png\",\"mime_type\":\"image/png\",\"width\":2048,\"height\":1152,\"source\":\"local\",\"is_big_paste\":false}],\"developer_mode_connector_ids\":[],\"selected_github_repos\":[],\"selected_all_github_repos\":false,\"system_hints\":[\"picture_v2\"],\"serialization_metadata\":{\"custom_symbol_offsets\":[]}}}],\"parent_message_id\":\"client-created-root\",\"model\":\"gpt-5-3\",\"client_prepare_state\":\"success\",\"timezone_offset_min\":-120,\"timezone\":\"Europe/Warsaw\",\"conversation_mode\":{\"kind\":\"primary_assistant\"},\"enable_message_followups\":true,\"system_hints\":[\"picture_v2\"],\"supports_buffering\":true,\"supported_encodings\":[\"v1\"],\"client_contextual_info\":{\"is_dark_mode\":false,\"time_since_loaded\":1590,\"page_height\":778,\"page_width\":823,\"pixel_ratio\":2,\"screen_height\":800,\"screen_width\":1280,\"app_name\":\"chatgpt.com\"},\"paragen_cot_summary_display_override\":\"allow\",\"force_parallel_switch\":\"auto\"}",
+  "method": "POST"
+});
+
+// Response
+
+event: delta_encoding
+data: "v1"
+
+data: {"type": "resume_conversation_token", "kind": "topic", "token": "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb25kdWl0X3V1aWQiOiI1ZDFkNDI2ZDYyOTQ0YjRhOTI3N2RiYWFkMzJhNzJkMyIsImNvbmR1aXRfbG9jYXRpb24iOiIxMC4xMjguMTAyLjIwMDo4MzA3IiwiY2x1c3RlciI6InVuaWZpZWQtMTQxIiwiaWF0IjoxNzc3MDMxODUxLCJleHAiOjE3NzcwMzkwNTEsInR1cm5fdG9waWNfaWQiOiJjb252ZXJzYXRpb24tdHVybi1mNzE4MDNjYi1kMWJjLTQyN2QtOTRjYS0xMGZlZTRkNDlkNTYifQ.ToTXiDkobXjbn87dNnAdsIRGVjD46im0_t_qqVD4_NZN1OaAQytgBNOgJIsrcKztoxgmUMuv8iGg7oIwFcmB4Q", "conversation_id": "69eb5a4b-282c-83ea-b4f6-91ba9510bc9f"}
+
+event: delta
+data: {"p": "", "o": "add", "v": {"message": {"id": "c77318e0-2fd8-4c30-8280-0f2186c8f08d", "author": {"role": "assistant", "name": null, "metadata": {}}, "create_time": 1777031852.011247, "update_time": null, "content": {"content_type": "code", "language": "python3", "response_format_name": null, "text": "{\"skipped_mainline\":true}"}, "status": "in_progress", "end_turn": false, "weight": 1.0, "metadata": {"parent_id": "7bb36944-1457-4894-bf98-c96d4660f4f0", "turn_exchange_id": "f71803cb-d1bc-427d-94ca-10fee4d49d56"}, "recipient": "t2uay3k.sj1i4kz", "channel": null}, "conversation_id": "69eb5a4b-282c-83ea-b4f6-91ba9510bc9f", "error": null, "error_code": null}, "c": 0} 
+
+event: delta
+data: {"p": "/message/status", "o": "replace", "v": "finished_successfully"}  
+
+data: {"type": "conversation_async_status", "conversation_id": "69eb5a4b-282c-83ea-b4f6-91ba9510bc9f", "async_status": 7}
+
+data: {"type": "message_marker", "conversation_id": "69eb5a4b-282c-83ea-b4f6-91ba9510bc9f", "message_id": "d05cfa78-a8cc-4476-9c00-ef537588d275", "marker": "user_visible_token", "event": "first"}
+
+event: delta
+data: {"p": "", "o": "add", "v": {"message": {"id": "d05cfa78-a8cc-4476-9c00-ef537588d275", "author": {"role": "tool", "name": "t2uay3k.sj1i4kz", "metadata": {}}, "create_time": 1777031852.014949, "update_time": null, "content": {"content_type": "text", "parts": ["Przetwarzanie obrazu\n\nWiele os\u00f3b tworzy w tym momencie obrazy, wi\u0119c mo\u017ce to chwil\u0119 zaj\u0105\u0107. Powiadomimy Ci\u0119, gdy Tw\u00f3j obraz b\u0119dzie gotowy."]}, "status": "finished_successfully", "end_turn": true, "weight": 1.0, "metadata": {"ui_card": true, "ui_card_title": "Przetwarzanie obrazu", "ui_card_description": "Wiele os\u00f3b tworzy w tym momencie obrazy, wi\u0119c mo\u017ce to chwil\u0119 zaj\u0105\u0107. Powiadomimy Ci\u0119, gdy Tw\u00f3j obraz b\u0119dzie gotowy.", "ui_card_shimmer": true, "image_gen_async": false, "trigger_async_ux": false, "image_gen_task_id": "chatimagegen-us-prod.fck9d:user-p37Jofj79Tinez266xv7OhSy-a2de19ee-9e54-4269-b791-aa8dbbe2e30e:US", "image_gen_multi_stream": true, "block_interruption": true, "permissions": [{"type": "notification", "status": "requested", "notification_channel_id": "image_gen", "notification_channel_name": "ImageGen", "notification_priority": 4}], "parent_id": "c77318e0-2fd8-4c30-8280-0f2186c8f08d", "turn_exchange_id": "f71803cb-d1bc-427d-94ca-10fee4d49d56"}, "recipient": "all", "channel": null}, "conversation_id": "69eb5a4b-282c-83ea-b4f6-91ba9510bc9f", "error": null, "error_code": null}, "c": 1}    
+
+data: {"type": "title_generation", "title": "Text Change Request", "conversation_id": "69eb5a4b-282c-83ea-b4f6-91ba9510bc9f"}
+
+data: {"type": "server_ste_metadata", "metadata": {"conduit_prewarmed": true, "plan_type": "plus", "plan_type_bucket": "paid", "user_agent": "web_desktop", "service": null, "tool_name": null, "tool_invoked": false, "fast_convo": true, "warmup_state": "warm", "is_first_turn": null, "cluster_region": "polandcentral", "model_slug": "gpt-5-3", "region": null, "is_multimodal": null, "did_auto_switch_to_reasoning": false, "auto_switcher_race_winner": null, "is_autoswitcher_enabled": false, "is_search": null, "did_prompt_contain_image": true, "search_tool_call_count": null, "search_tool_query_types": null, "message_id": "c77318e0-2fd8-4c30-8280-0f2186c8f08d", "request_id": "ec342ae1-4bb6-43d1-acd4-1554763bd7ae", "turn_exchange_id": "f71803cb-d1bc-427d-94ca-10fee4d49d56", "turn_trace_id": "5f5fd37d-f5ed-4cfb-929c-e71afd9dfe59", "a32e6ebcb": null, "resume_with_websockets": true, "low_turn_topic_ttl": false, "streaming_async_status": false, "replace_stream_status": true, "temporal_conversation_turn": false, "turn_use_case": "image gen", "turn_mode": "default"}, "conversation_id": "69eb5a4b-282c-83ea-b4f6-91ba9510bc9f"}
+
+data: {"type": "message_stream_complete", "conversation_id": "69eb5a4b-282c-83ea-b4f6-91ba9510bc9f"}
+
+data: {"type": "conversation_detail_metadata", "banner_info": null, "blocked_features": [], "model_limits": [], "limits_progress": [{"feature_name": "deep_research", "remaining": 25, "reset_after": "2026-05-24T11:57:32.443716+00:00"}, {"feature_name": "odyssey", "remaining": 40, "reset_after": "2026-05-24T11:57:32.443731+00:00"}, {"feature_name": "file_upload", "remaining": 80, "reset_after": "2026-04-24T14:57:32.443736+00:00"}, {"feature_name": "paste_text_to_file", "remaining": 80, "reset_after": "2026-04-24T14:57:32.443740+00:00"}, {"feature_name": "image_gen", "remaining": 117, "reset_after": "2026-04-25T11:31:35.443744+00:00"}], "default_model_slug": "gpt-5-3", "atlas_mode_enabled": null, "conversation_id": "69eb5a4b-282c-83ea-b4f6-91ba9510bc9f"}
+
+data: [DONE]
+
+```
+
+- Download generated image
+
+```js
+fetch("https://chatgpt.com/backend-api/files/download/file_00000000ace4724388be72cf8df3b7a5?conversation_id=69eb5516-e774-83ea-94ff-7d64242a01ef&inline=false", {
+  "headers": {
+    "authorization": "Bearer <CHATGPT_BEARER_TOKEN>",
+  },
+  "method": "GET"
+});
+
+// Response
+
+
+// Pending - has uploaded image
+{"status":"success","download_url":"https://chatgpt.com/backend-api/estuary/content?id=file_000000002ca87246870a5face5cbfa35&ts=493619&p=fs&cid=1&sig=cc101cba4e8ebda7ab809e2912869e0ed30aedc720da363cb545e274f1930ed2&v=0","metadata":null,"file_name":null,"creation_time":null,"no_auth_user_upload":null,"mime_type":null,"file_size_bytes":null}
+
+// Fullfilled - has generated image
+{"status":"success","download_url":"https://chatgpt.com/backend-api/estuary/content?id=file_00000000ace4724388be72cf8df3b7a5&ts=493619&p=fs&cid=1&sig=59c3d17d1f7f6e9b4d4b77eeb9dae1701f8c485cd20d4aca1eb8e2b2bb179a93&v=0","metadata":null,"file_name":"user-p37Jofj79Tinez266xv7OhSy/fae4f6a4-a4ad-48d0-9073-058c6199863e.png","creation_time":null,"no_auth_user_upload":null,"mime_type":null,"file_size_bytes":1796482}
 ---
 
 ## Key Decisions

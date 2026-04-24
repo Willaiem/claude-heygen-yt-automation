@@ -70,7 +70,7 @@ export function ResultsTable({ jobs }: Props) {
               <td className="px-4 py-3">
                 {job.thumbnailPath ? (
                   <img
-                    src={job.thumbnailPath}
+                    src={`/api/file?path=${encodeURIComponent(job.thumbnailPath)}`}
                     alt="Thumbnail"
                     className="h-12 w-20 rounded object-cover"
                   />
@@ -112,7 +112,7 @@ export function ResultsTable({ jobs }: Props) {
                   )}
                   {job.videoPaths?.[0] && (
                     <a
-                      href={`/api/download-video?path=${encodeURIComponent(job.videoPaths[0])}`}
+                      href={`/api/file?path=${encodeURIComponent(job.videoPaths[0])}&download=1`}
                       className="rounded border border-zinc-700 px-2 py-1 text-xs text-blue-400 hover:border-blue-500"
                     >
                       {job.videoPaths.length > 1

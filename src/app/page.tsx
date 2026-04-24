@@ -1,10 +1,13 @@
 "use client";
 
 import { useState } from "react";
+
+import { generate } from "@/app/actions";
 import { AvatarSelector } from "@/components/AvatarSelector";
 import { NicheSelector } from "@/components/NicheSelector";
-import { UrlInput } from "@/components/UrlInput";
 import { ResultsTable } from "@/components/ResultsTable";
+import { UrlInput } from "@/components/UrlInput";
+import { useSSE } from "@/hooks/useSSE";
 import type { HeyGenAvatar, Job } from "@/lib/types";
 
 export default function Home() {
@@ -12,15 +15,40 @@ export default function Home() {
     null,
   );
   const [selectedNiche, setSelectedNiche] = useState("health");
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [batchId, setBatchId] = useState<string | null>(null);
+  const [seedJobs, setSeedJobs] = useState<Job[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const { jobs, isComplete } = useSSE(batchId, seedJobs);
+  const isRunning = batchId !== null && !isComplete;
 
   const handleGenerate = async (urls: string[]) => {
-    if (!selectedAvatar || urls.length === 0) return;
-    setIsGenerating(true);
-    // TODO(phase 5): call generate() action, subscribe to SSE progress
-    setIsGenerating(false);
+    if (!selectedAvatar?.voiceId) return;
+    setError(null);
+    setIsSubmitting(true);
+    try {
+      const response = await generate({
+        urls,
+        avatarId: selectedAvatar.avatarId,
+        voiceId: selectedAvatar.voiceId,
+        niche: selectedNiche,
+        faceImageUrl: selectedAvatar.faceImageUrl,
+      });
+      const seeded: Job[] = response.jobs.map((stub) => ({
+        ...stub,
+        progress: 0,
+      }));
+      setSeedJobs(seeded);
+      setBatchId(response.batchId);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setIsSubmitting(false);
+    }
   };
+
+  const canGenerate = Boolean(selectedAvatar?.voiceId);
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-8">
@@ -39,8 +67,11 @@ export default function Home() {
       <section className="mb-8">
         <UrlInput
           onGenerate={handleGenerate}
-          disabled={!selectedAvatar || isGenerating}
+          disabled={!canGenerate || isSubmitting || isRunning}
         />
+        {error && (
+          <p className="mt-2 text-xs text-red-400">{error}</p>
+        )}
       </section>
 
       <section>
