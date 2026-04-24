@@ -61,6 +61,7 @@ All cross-boundary types live in `src/lib/types.ts`. **Every exported type is `z
 ## Code style
 
 - **Default to no comments.** Keep a comment only when the WHY isn't obvious from the code itself — math, regex, hidden invariants, workarounds for specific bugs, subtle constraints a reader would otherwise miss. Strip anything that restates WHAT the code does, describes structure that's already visible, or references a past task/PR. If removing the comment wouldn't confuse a careful reader, delete it. This applies to existing comments too — when editing a file, prune excessive commentary you come across.
+- **No one-letter variable names.** Including arrow-function parameters, `.map`/`.filter`/`.reduce` callbacks, catch bindings, and destructured aliases. Use a descriptive name even for trivial callbacks (`items.map((item) => ...)`, not `items.map((x) => ...)`). The only exception is conventional loop counters in classic `for` loops (`i`, `j`, `k`). This applies to existing code too — when editing a file, rename any one-letter locals you come across.
 
 ## Workflow
 
