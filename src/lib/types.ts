@@ -40,7 +40,7 @@ export interface Batch {
   avatarId: string;
   voiceId: string;
   niche: string;
-  faceImagePath?: string;
+  faceImageUrl?: string;
   jobs: Job[];
   createdAt: number;
 }
@@ -51,6 +51,7 @@ export interface HeyGenAvatar {
   avatar_name: string;
   preview_image_url: string;
   voice_id?: string;
+  face_image_url?: string;
 }
 
 // ── Niche config ───────────────────────────────────────────────────
@@ -75,7 +76,7 @@ export interface GenerateRequest {
   avatarId: string;
   voiceId: string;
   niche: string;
-  faceImagePath?: string;
+  faceImageUrl?: string;
 }
 
 export interface GenerateResponse {

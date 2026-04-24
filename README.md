@@ -48,6 +48,7 @@ npm install
 
 ```
 HEYGEN_API_KEY=sk_V2_hgu_...
+HEYGEN_COOKIE=...               # cookie string for api2.heygen.com private endpoints
 OPENAI_API_KEY=sk-...
 YOUTUBE_TRANSCRIPT_API_TOKEN=...
 ```
@@ -55,7 +56,7 @@ YOUTUBE_TRANSCRIPT_API_TOKEN=...
 3. Create output directories (if they don't exist):
 
 ```bash
-mkdir -p output/videos output/thumbnails public/references
+mkdir -p output/videos output/thumbnails
 ```
 
 4. Run the dev server:
@@ -68,12 +69,11 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Usage
 
-1. **Upload your face image** — click the upload button in the config bar (persisted to disk, one-time setup)
-2. **Select a HeyGen avatar** — fetched from your HeyGen account
-3. **Pick a niche** — Health or Politics (controls script tone and default tags)
-4. **Paste YouTube URLs** — one per line
-5. **Click Generate** — watch progress via SSE as each pipeline step completes
-6. **Copy metadata** — use the copy buttons for title, tags, and description when uploading to YouTube Studio
+1. **Select a HeyGen avatar** — fetched from your HeyGen account; the avatar's own portrait (`photo_identity_s3_url`) is reused as the face reference for thumbnail generation
+2. **Pick a niche** — Health or Politics (controls script tone and default tags)
+3. **Paste YouTube URLs** — one per line
+4. **Click Generate** — watch progress via SSE as each pipeline step completes
+5. **Copy metadata** — use the copy buttons for title, tags, and description when uploading to YouTube Studio
 
 ## Project Structure
 
@@ -82,8 +82,8 @@ claude-heygen-yt-automation/
 ├── src/
 │   ├── app/                    # Next.js pages + API routes
 │   │   ├── page.tsx            # Single-page UI
-│   │   └── api/                # avatars, generate, progress, upload-face, etc.
-│   ├── components/             # AvatarSelector, NicheSelector, FaceUploader, etc.
+│   │   └── api/                # avatars, generate, progress, download-video, resubmit
+│   ├── components/             # AvatarSelector, NicheSelector, UrlInput, ResultsTable
 │   ├── lib/
 │   │   ├── queue.ts            # In-memory job queue + orchestrator
 │   │   ├── niches.ts           # Niche configs
@@ -94,7 +94,6 @@ claude-heygen-yt-automation/
 ├── output/
 │   ├── videos/                 # Downloaded MP4s
 │   └── thumbnails/             # Generated thumbnails
-├── public/references/          # Uploaded face images
 ├── ROADMAP.md                  # Implementation progress tracker
 └── CLAUDE_YOUTUBE_AUTOMATION.md # Original blueprint reference
 ```

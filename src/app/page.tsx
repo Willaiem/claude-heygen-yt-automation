@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { AvatarSelector } from "@/components/AvatarSelector";
 import { NicheSelector } from "@/components/NicheSelector";
-import { FaceUploader } from "@/components/FaceUploader";
 import { UrlInput } from "@/components/UrlInput";
 import { ResultsTable } from "@/components/ResultsTable";
 import type { HeyGenAvatar, Job } from "@/lib/types";
@@ -13,7 +12,6 @@ export default function Home() {
     null,
   );
   const [selectedNiche, setSelectedNiche] = useState("health");
-  const [faceImagePath, setFaceImagePath] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
 
@@ -37,7 +35,6 @@ export default function Home() {
           onSelect={setSelectedAvatar}
         />
         <NicheSelector selected={selectedNiche} onSelect={setSelectedNiche} />
-        <FaceUploader onUploaded={setFaceImagePath} />
       </section>
 
       {/* ── URL input ──────────────────────────────────── */}
