@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getAvatars } from "@/app/actions";
 import type { HeyGenAvatar } from "@/lib/types";
 
 interface Props {
@@ -14,16 +15,12 @@ export function AvatarSelector({ selected, onSelect }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/avatars")
-      .then((r) => {
-        if (!r.ok) throw new Error("Failed to fetch avatars");
-        return r.json();
-      })
-      .then((data: HeyGenAvatar[]) => {
+    getAvatars()
+      .then((data) => {
         setAvatars(data);
         setLoading(false);
       })
-      .catch((err) => {
+      .catch((err: Error) => {
         setError(err.message);
         setLoading(false);
       });

@@ -444,8 +444,8 @@ fetch("https://api2.heygen.com/v1/pacific/collaboration/video.download/status?wo
 {"code":100,"data":{"workflow_id":"7bf5a2b8854e43ba9aa52ac1a251ba4c-e793c09e-a6ea-46b0-96a1-ed9dfe24298a_1080p_nocap","status":"COMPLETED","download_url":"https://resource2.heygen.ai/video/transcode/7bf5a2b8854e43ba9aa52ac1a251ba4c/ve793c09e-a6ea-46b0-96a1-ed9dfe24298a/720x1280_nocap.mp4?response-content-disposition=attachment%3B+filename%2A%3DUTF-8%27%27Avatar%2520Video_1080p.mp4%3B"},"msg":null,"message":null}
 ```
 
-- [x] `GET /api/avatars` — fetches `api2.heygen.com/v2/avatar_group.private.list` (cookie auth), maps groups → `HeyGenAvatar[]` including `face_image_url` from `photo_identity_s3_url`, caches via `globalThis` with 5-minute TTL (signed S3 URLs)
-- [x] Wire `AvatarSelector` to `/api/avatars` (already wired in Phase 1 shell)
+- [x] `getAvatars()` server action (`src/app/actions.ts`) — fetches `api2.heygen.com/v2/avatar_group.private.list` (cookie auth), maps groups → `HeyGenAvatar[]` including `face_image_url` from `photo_identity_s3_url`, caches via `globalThis` with 5-minute TTL (signed S3 URLs). **Server actions preferred over route handlers** for RPC-style calls; route handlers reserved for streaming (SSE) and binary responses.
+- [x] Wire `AvatarSelector` to `getAvatars()` action
 - ~~`POST /api/upload-face` — multipart form → `public/references/`~~ **REMOVED**: face image is read off the selected avatar's `photo_identity_s3_url`, no user upload needed
 - ~~Wire `FaceUploader` to `/api/upload-face`~~ **REMOVED** with the uploader
 
@@ -464,13 +464,13 @@ fetch("https://api2.heygen.com/v1/pacific/collaboration/video.download/status?wo
 ## Phase 4: Queue + Orchestration
 
 - [ ] `src/lib/queue.ts` — in-memory `JobQueue` (EventEmitter, `globalThis` singleton, sequential Claude gating, parallel HeyGen polling)
-- [ ] `POST /api/generate` — accept `{ urls[], avatarId, voiceId, niche, faceImageUrl }` (`faceImageUrl` comes from the selected avatar), create batch, return `batchId`
-- [ ] `GET /api/progress` — SSE via `ReadableStream`, subscribe to queue events
+- [ ] `generate()` server action — accept `{ urls[], avatarId, voiceId, niche, faceImageUrl }` (`faceImageUrl` comes from the selected avatar), create batch, return `batchId`
+- [ ] `GET /api/progress` — SSE via `ReadableStream`, subscribe to queue events (route handler, not a server action — actions can't stream)
 
 ## Phase 5: Wire Frontend
 
 - [ ] `src/hooks/useSSE.ts` — `EventSource` wrapper hook
-- [ ] Connect Generate button → `POST /api/generate`
+- [ ] Connect Generate button → `generate()` action
 - [ ] Connect `ResultsTable` to SSE progress stream
 - [ ] Copy-to-clipboard for title, tags, description
 - [ ] Download links for MP4s
@@ -478,7 +478,7 @@ fetch("https://api2.heygen.com/v1/pacific/collaboration/video.download/status?wo
 
 ## Phase 6: Polish
 
-- [ ] `POST /api/resubmit` — retry failed jobs
+- [ ] `resubmit()` server action — retry failed jobs
 - [ ] Error states and loading indicators
 - [ ] YouTube URL parsing utility (`youtube.com/watch?v=`, `youtu.be/`, `youtube.com/shorts/`)
 
@@ -504,12 +504,10 @@ claude-heygen-yt-automation/
 │   │   ├── layout.tsx
 │   │   ├── page.tsx
 │   │   ├── globals.css
+│   │   ├── actions.ts            # server actions: getAvatars, generate, resubmit
 │   │   └── api/
-│   │       ├── avatars/route.ts
-│   │       ├── generate/route.ts
-│   │       ├── progress/route.ts
-│   │       ├── download-video/route.ts
-│   │       └── resubmit/route.ts
+│   │       ├── progress/route.ts       # SSE — actions can't stream
+│   │       └── download-video/route.ts # binary file response
 │   ├── components/
 │   │   ├── AvatarSelector.tsx
 │   │   ├── NicheSelector.tsx

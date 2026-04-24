@@ -20,7 +20,9 @@ Two separate Node packages live in this repo. Root `package.json` is the Next.js
 
 ## Architecture
 
-The repo is a local-only batch processor that turns YouTube URLs into avatar-narrated videos with branded thumbnails and metadata. One-click flow: UI → `/api/generate` → job queue → per-URL pipeline → SSE progress back to UI.
+The repo is a local-only batch processor that turns YouTube URLs into avatar-narrated videos with branded thumbnails and metadata. One-click flow: UI → `generate()` server action → job queue → per-URL pipeline → SSE progress back to UI.
+
+**Server actions vs route handlers.** RPC-style calls (fetch avatars, kick off a batch, resubmit a failed job) live as server actions in `src/app/actions.ts`. Route handlers under `src/app/api/` are reserved for things actions can't do: streaming (`GET /api/progress` — SSE) and binary file responses (video downloads). When adding a new endpoint, default to a server action; only reach for a route handler if you need a `Response` object directly.
 
 **Pipeline (per URL), implemented as composable modules under `src/lib/pipeline/`:**
 1. Fetch transcript (youtube-transcript.io)
@@ -39,7 +41,7 @@ The repo is a local-only batch processor that turns YouTube URLs into avatar-nar
 ### Non-obvious conventions
 
 - **HeyGen avatar list uses private `api2.heygen.com` endpoints with cookie auth, not the public `api.heygen.com` API-key endpoints.** The private endpoint returns `photo_identity_s3_url` and `default_voice_id`, which the public API doesn't. The cookie string lives in `HEYGEN_COOKIE` (env). See the HEYGEN API REFERENCE block in `ROADMAP.md` for the exact request/response shapes — the roadmap is the source of truth for these reverse-engineered endpoints.
-- **Avatar URLs are signed S3 links with ~7-day Expires params.** Any cache of the avatars response must use a short TTL (current value: 5 minutes in `src/app/api/avatars/route.ts`). Never cache indefinitely.
+- **Avatar URLs are signed S3 links with ~7-day Expires params.** Any cache of the avatars response must use a short TTL (current value: 5 minutes in the `getAvatars` action in `src/app/actions.ts`). Never cache indefinitely.
 - **Face image is the selected avatar's `photo_identity_s3_url`, surfaced on `HeyGenAvatar.face_image_url`.** There is no user-upload surface (there used to be, it was removed). Thumbnail generation reads the face off the avatar.
 - **Claude CLI prompt is piped via stdin, not passed as a CLI arg.** Windows `cmd` has a ~32k-char argv limit and prompts are much longer than that. Use `child_process.spawn("claude", ["-p", "--output-format", "json"])` and write the prompt to `stdin`.
 - **Claude CLI output may be wrapped in markdown code blocks.** Parser in `spawn-claude.ts` should strip fences before `JSON.parse`. The JSON shape is `{ script, title, tags, description }`.

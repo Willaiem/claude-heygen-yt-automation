@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+"use server";
+
 import type { HeyGenAvatar } from "@/lib/types";
 
 // HeyGen signs preview/face URLs with an Expires query param (~7 days).
@@ -31,46 +32,29 @@ interface HeyGenAvatarGroupListResponse {
   message?: string | null;
 }
 
-export async function GET() {
+export async function getAvatars(): Promise<HeyGenAvatar[]> {
   const cached = globalWithCache.__avatarsCache;
   if (cached && cached.expiresAt > Date.now()) {
-    return NextResponse.json(cached.data);
+    return cached.data;
   }
 
   const cookie = process.env.HEYGEN_COOKIE;
   if (!cookie) {
-    return NextResponse.json(
-      { error: "HEYGEN_COOKIE not configured in .env.local" },
-      { status: 500 },
-    );
+    throw new Error("HEYGEN_COOKIE not configured in .env.local");
   }
 
-  let res: Response;
-  try {
-    res = await fetch(
-      "https://api2.heygen.com/v2/avatar_group.private.list?limit=50&page=1",
-      { headers: { cookie }, cache: "no-store" },
-    );
-  } catch (err) {
-    return NextResponse.json(
-      { error: `HeyGen request failed: ${(err as Error).message}` },
-      { status: 502 },
-    );
-  }
+  const res = await fetch(
+    "https://api2.heygen.com/v2/avatar_group.private.list?limit=50&page=1",
+    { headers: { cookie }, cache: "no-store" },
+  );
 
   if (!res.ok) {
-    return NextResponse.json(
-      { error: `HeyGen responded ${res.status}` },
-      { status: 502 },
-    );
+    throw new Error(`HeyGen responded ${res.status}`);
   }
 
   const body = (await res.json()) as HeyGenAvatarGroupListResponse;
   if (body.code !== 100 || !body.data?.avatar_groups) {
-    return NextResponse.json(
-      { error: body.message ?? body.msg ?? "Unexpected HeyGen response" },
-      { status: 502 },
-    );
+    throw new Error(body.message ?? body.msg ?? "Unexpected HeyGen response");
   }
 
   const avatars: HeyGenAvatar[] = body.data.avatar_groups.map((g) => ({
@@ -86,5 +70,5 @@ export async function GET() {
     expiresAt: Date.now() + CACHE_TTL_MS,
   };
 
-  return NextResponse.json(avatars);
+  return avatars;
 }
