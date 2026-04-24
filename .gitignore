@@ -13,3 +13,4 @@ out
 
 # Pipeline output
 output/
+tsconfig.tsbuildinfo
