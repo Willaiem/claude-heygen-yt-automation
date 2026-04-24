@@ -110,12 +110,14 @@ export function ResultsTable({ jobs }: Props) {
                       Desc
                     </button>
                   )}
-                  {job.videoPath && (
+                  {job.videoPaths?.[0] && (
                     <a
-                      href={`/api/download-video?path=${encodeURIComponent(job.videoPath)}`}
+                      href={`/api/download-video?path=${encodeURIComponent(job.videoPaths[0])}`}
                       className="rounded border border-zinc-700 px-2 py-1 text-xs text-blue-400 hover:border-blue-500"
                     >
-                      Download
+                      {job.videoPaths.length > 1
+                        ? `Download (1/${job.videoPaths.length})`
+                        : "Download"}
                     </a>
                   )}
                 </div>

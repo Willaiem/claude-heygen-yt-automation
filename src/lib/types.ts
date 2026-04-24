@@ -29,8 +29,8 @@ export const JobSchema = z.object({
   description: z.string().optional(),
   tags: z.array(z.string()).optional(),
   scenes: z.array(z.string()).optional(),
-  heygenVideoId: z.string().optional(),
-  videoPath: z.string().optional(),
+  heygenVideoIds: z.array(z.string()).optional(),
+  videoPaths: z.array(z.string()).optional(),
   thumbnailPath: z.string().optional(),
   competitorThumbPath: z.string().optional(),
 });

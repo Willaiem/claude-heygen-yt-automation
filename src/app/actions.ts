@@ -1,7 +1,11 @@
 "use server";
 
+import { getQueue } from "@/lib/queue";
 import {
+  GenerateRequestSchema,
   HeyGenAvatarListResponseSchema,
+  type GenerateRequest,
+  type GenerateResponse,
   type HeyGenAvatar,
 } from "@/lib/types";
 
@@ -50,4 +54,33 @@ export async function getAvatars(): Promise<HeyGenAvatar[]> {
   };
 
   return avatars;
+}
+
+export async function generate(
+  input: GenerateRequest,
+): Promise<GenerateResponse> {
+  const parsed = GenerateRequestSchema.parse(input);
+  if (parsed.urls.length === 0) {
+    throw new Error("generate: urls is empty");
+  }
+
+  const queue = getQueue();
+  const batch = queue.createBatch({
+    avatarId: parsed.avatarId,
+    voiceId: parsed.voiceId,
+    niche: parsed.niche,
+    faceImageUrl: parsed.faceImageUrl,
+    urls: parsed.urls,
+  });
+  queue.startBatch(batch.id);
+
+  return {
+    batchId: batch.id,
+    jobs: batch.jobs.map((job) => ({
+      id: job.id,
+      url: job.url,
+      videoId: job.videoId,
+      step: job.step,
+    })),
+  };
 }

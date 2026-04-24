@@ -463,9 +463,11 @@ fetch("https://api2.heygen.com/v1/pacific/collaboration/video.download/status?wo
 
 ## Phase 4: Queue + Orchestration
 
-- [ ] `src/lib/queue.ts` — in-memory `JobQueue` (EventEmitter, `globalThis` singleton, sequential Claude gating, parallel HeyGen polling)
-- [ ] `generate()` server action — accept `{ urls[], avatarId, voiceId, niche, faceImageUrl }` (`faceImageUrl` comes from the selected avatar), create batch, return `batchId`
-- [ ] `GET /api/progress` — SSE via `ReadableStream`, subscribe to queue events (route handler, not a server action — actions can't stream)
+- [x] `src/lib/queue.ts` — in-memory `JobQueue` (EventEmitter on `globalThis` singleton). Per-job pipeline runner wired through transcript → competitor thumb → Claude → split scenes → submit → poll → download → thumbnail, emitting `job_update` on every state change and `batch_complete` when the batch drains. **Sequential Claude gating** via a shared promise chain (`claudeChain`) that serializes `spawnClaude` calls across all in-flight jobs; the chain swallows its own rejections so one CLI failure doesn't poison subsequent spawns. HeyGen polling stays parallel (each job's `pollHeyGen` walks its own scenes via `Promise.all`).
+- [x] `generate()` server action — accepts `{ urls[], avatarId, voiceId, niche, faceImageUrl }` (validated via `GenerateRequestSchema`), creates a batch, kicks off processing, returns `{ batchId, jobs }`.
+- [x] `GET /api/progress` — SSE route handler. Validates `?batchId=`, sends an initial snapshot of every job, subscribes to queue events filtered by `batchId`, and unsubscribes on `batch_complete` or `request.signal` abort. `runtime = "nodejs"`, `dynamic = "force-dynamic"`.
+- [x] Schema update (was singular, now plural — reflects per-scene truth): `Job.heygenVideoId` → `heygenVideoIds: string[]`; `Job.videoPath` → `videoPaths: string[]`. `ResultsTable` renders one Download button for `videoPaths[0]` (labels as `(1/N)` when multi-scene; concatenation is deferred to Remotion).
+- [x] `src/lib/youtube.ts` — `parseYouTubeUrl()` (handles `watch?v=`, `youtu.be/`, `shorts/`, `embed/`, `live/`, and bare 11-char ids). **Moved up from Phase 6** — the queue needs it to derive `videoId` from each submitted URL.
 
 ## Phase 5: Wire Frontend
 
@@ -478,9 +480,9 @@ fetch("https://api2.heygen.com/v1/pacific/collaboration/video.download/status?wo
 
 ## Phase 6: Polish
 
-- [ ] `resubmit()` server action — retry failed jobs
+- [ ] `resubmit()` server action — retry failed jobs (queue already exposes `resubmitJob(batchId, jobId)`; action just needs to call it)
 - [ ] Error states and loading indicators
-- [ ] YouTube URL parsing utility (`youtube.com/watch?v=`, `youtu.be/`, `youtube.com/shorts/`)
+- [x] ~~YouTube URL parsing utility~~ — landed in Phase 4 as `src/lib/youtube.ts`
 
 ---
 
