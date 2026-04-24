@@ -12,7 +12,7 @@
 - **SSE** for real-time progress
 - **Local only** — no auth
 
-**Env keys:** `HEYGEN_COOKIE` (all HeyGen calls use cookie auth on private `api2.heygen.com`), `OPENAI_API_KEY`, `YOUTUBE_TRANSCRIPT_API_TOKEN`
+**Env keys:** `HEYGEN_COOKIE` (all HeyGen calls use cookie auth on private `api2.heygen.com`), `FAL_KEY` (thumbnail gen via fal.ai `openai/gpt-image-2`), `YOUTUBE_TRANSCRIPT_API_TOKEN`
 
 ---
 
@@ -25,7 +25,7 @@
 5. Submit to HeyGen — per scene: private TTS stream (`api2.heygen.com/v2/online/text_to_speech.stream`) + `POST /v2/avatar/shortcut/submit` with the resulting audio_data (cookie auth)
 6. Poll HeyGen — per video_id: queue download via `/v1/pacific/collaboration/video.download`, poll workflow status every 30s until `COMPLETED`
 7. Download MP4 — save to `output/videos/`
-8. Generate thumbnail — ChatGPT `gpt-4o` with face ref + competitor thumbnail
+8. Generate thumbnail — fal.ai `openai/gpt-image-2` with face ref + competitor thumbnail (passed as `image_urls`)
 9. SSE updates at each step
 
 ---
@@ -452,13 +452,13 @@ fetch("https://api2.heygen.com/v1/pacific/collaboration/video.download/status?wo
 ## Phase 3: Pipeline Modules
 
 - [x] `src/lib/pipeline/fetch-transcript.ts` — POST to `youtube-transcript.io/api/transcripts` (Basic auth via `YOUTUBE_TRANSCRIPT_API_TOKEN`, joins transcript segments into plain text)
-- [x] `src/lib/pipeline/fetch-competitor-thumb.ts` — download from `img.youtube.com` (falls back `maxresdefault` → `hqdefault` → `mqdefault`), saves to `output/thumbnails/competitor_{videoId}.jpg`
+- [x] `src/lib/pipeline/fetch-competitor-thumb.ts` — download from `img.youtube.com` (falls back `maxresdefault` → `hqdefault` → `mqdefault`), saves to `output/thumbnails/competitor_{videoId}.jpg`. Returns `{ path, url }` — the path is kept for downstream use (Remotion / debugging), the URL is what fal.ai's `image_urls[]` consumes directly so no re-upload is needed.
 - [x] `src/lib/pipeline/spawn-claude.ts` — `child_process.spawn("claude", ["-p", "--output-format", "json"])` with `shell: true` (Windows), prompt piped via stdin, strips markdown fences, parses `{ script, title, tags, description }` via zod
 - [x] `src/lib/pipeline/split-scenes.ts` — sentence-boundary splitter, `HEYGEN_SCENE_CHAR_LIMIT = 4800`; hard-splits any single sentence longer than the limit
 - [x] `src/lib/pipeline/heygen-submit.ts` — **cookie-authed** against `api2.heygen.com`; per scene: `POST /v2/online/text_to_speech.stream` (reads NDJSON until `sequence_number: -1`, collects `audio_url` + aggregated `word_timestamps`) then `POST /v2/avatar/shortcut/submit` with the `audio_data` (landscape, 720p); returns `string[]` of `video_id` (one per scene)
 - [x] `src/lib/pipeline/heygen-poll.ts` — **cookie-authed**; per video_id: `POST /v1/pacific/collaboration/video.download` → workflow_id, then 30s polling of `/v1/pacific/collaboration/video.download/status` until `COMPLETED`/`FAILED`, 30-min hard cap, `onTick(videoId, status)` callback; polls all video_ids in parallel; returns `string[]` of `download_url`
 - [x] `src/lib/pipeline/download-video.ts` — streams MP4 via `Readable.fromWeb` + `pipeline` → `output/videos/{videoId}.mp4`
-- [x] `src/lib/pipeline/generate-thumbnail.ts` — OpenAI `images/edits` with `gpt-image-1` (the API model powering "gpt-4o" image gen), multipart `image[]` with face ref + competitor thumb, `1536x1024` output; saves PNG to `output/thumbnails/{videoId}.png`
+- [x] `src/lib/pipeline/generate-thumbnail.ts` — fal.ai `openai/gpt-image-2` via sync REST (`POST https://fal.run/openai/gpt-image-2`, `Authorization: Key $FAL_KEY`). Body: `{ prompt, image_urls: [faceImageUrl, competitorThumbUrl], image_size: { width: 1536, height: 1024 }, quality: "high", output_format: "png", num_images: 1 }`. Both inputs are public URLs (HeyGen face S3 + YouTube `img.youtube.com` thumb), so no fal-storage upload needed. Streams the returned signed URL to `output/thumbnails/{videoId}.png`. **Was previously OpenAI `images/edits` with `gpt-image-1`; switched away because OpenAI's `images/edits` charge added up and a brief detour through ChatGPT's private `/f/conversation` API was abandoned (see Key Decisions).**
 - [x] `src/lib/niches.ts` — `NICHES` array of `NicheConfig` (health, politics) parsed through `NicheConfigSchema`; `getNiche(id)` helper throws on unknown id
 
 ## Phase 4: Queue + Orchestration
@@ -537,101 +537,26 @@ claude-heygen-yt-automation/
 
 ---
 
-## ChatGPT API Reference
+## Thumbnail Provider — fal.ai `openai/gpt-image-2`
 
-- Init conversation with image upload mode
+Sync REST: `POST https://fal.run/openai/gpt-image-2`, header `Authorization: Key $FAL_KEY`.
 
-```js
-fetch("https://chatgpt.com/backend-api/conversation/init", {
-  "headers": {
-    "authorization": "Bearer <CHATGPT_BEARER_TOKEN>",
-  },
-  "body": "{\"gizmo_id\":null,\"requested_default_model\":null,\"conversation_id\":null,\"timezone_offset_min\":-120,\"system_hints\":[\"picture_v2\"]}",
-  "method": "POST"
-});
-
-{"type":"conversation_detail_metadata","banner_info":null,"blocked_features":[],"model_limits":[],"limits_progress":[{"feature_name":"deep_research","remaining":25,"reset_after":"2026-05-24T11:48:56.168582+00:00"},{"feature_name":"odyssey","remaining":40,"reset_after":"2026-05-24T11:48:56.168602+00:00"},{"feature_name":"file_upload","remaining":80,"reset_after":"2026-04-24T14:48:56.168610+00:00"},{"feature_name":"paste_text_to_file","remaining":80,"reset_after":"2026-04-24T14:48:56.168615+00:00"},{"feature_name":"image_gen","remaining":118,"reset_after":"2026-04-25T11:31:36.168619+00:00"}],"default_model_slug":"gpt-5-3","atlas_mode_enabled":null}
+Body:
+```json
+{
+  "prompt": "...",
+  "image_urls": ["<face S3 URL>", "<YouTube img URL>"],
+  "image_size": { "width": 1536, "height": 1024 },
+  "quality": "high",
+  "output_format": "png",
+  "num_images": 1
+}
 ```
 
+Response: `{ images: [{ url, width, height, content_type }] }` — stream the signed `url` to disk.
 
-- Upload image to conversation (event streaming)
+Both inputs are already public URLs (HeyGen `photo_identity_s3_url` and `https://img.youtube.com/vi/{id}/{res}.jpg`), so no fal-storage upload step is needed — `image_urls[]` is consumed directly.
 
-```js
-fetch("https://chatgpt.com/backend-api/files/process_upload_stream", {
-  "headers": {
-    "accept": "*/*",
-    "authorization": "Bearer <CHATGPT_BEARER_TOKEN>",
-  },
-  "body": "{\"file_id\":\"file_00000000c95872438079af5ed8c76efa\",\"use_case\":\"multimodal\",\"index_for_retrieval\":false,\"file_name\":\"Zrzut ekranu 2026-04-19 o 21.19.26 (2).png\",\"entry_surface\":\"chat_composer\"}",
-  "method": "POST"
-});
-
-{"file_id":"file_00000000c95872438079af5ed8c76efa","event":"file.processing.started","message":"Start processing file: file_00000000c95872438079af5ed8c76efa","progress":0.0,"extra":null}
-{"file_id":"file_00000000c95872438079af5ed8c76efa","event":"file.processing.file_ready","message":"File file_00000000c95872438079af5ed8c76efa is ready to download","progress":100.0,"extra":null}
-{"file_id":"file_00000000c95872438079af5ed8c76efa","event":"file.processing.completed","message":"Succeeded processing file file_00000000c95872438079af5ed8c76efa","progress":100.0,"extra":null}
-```
-
-- Send message in conversation (event streaming)
-```js
-fetch("https://chatgpt.com/backend-api/f/conversation", {
-  "headers": {
-    "accept": "text/event-stream",
-    "authorization": "Bearer <CHATGPT_BEARER_TOKEN>",
-  },
-  "body": "{\"action\":\"next\",\"messages\":[{\"id\":\"7bb36944-1457-4894-bf98-c96d4660f4f0\",\"author\":{\"role\":\"user\"},\"create_time\":1777031850.159,\"content\":{\"content_type\":\"multimodal_text\",\"parts\":[{\"content_type\":\"image_asset_pointer\",\"asset_pointer\":\"sediment://file_000000006be47243ad29ebb5c32b6818\",\"size_bytes\":1090917,\"width\":2048,\"height\":1152},\"change text to:\\nNASR*ŁEM NA\\nWYCIERACZKĘ\"]},\"metadata\":{\"attachments\":[{\"id\":\"file_000000006be47243ad29ebb5c32b6818\",\"size\":1090917,\"name\":\"de4b1605-0da1-4548-b86c-bd04c3aa24b4.png\",\"mime_type\":\"image/png\",\"width\":2048,\"height\":1152,\"source\":\"local\",\"is_big_paste\":false}],\"developer_mode_connector_ids\":[],\"selected_github_repos\":[],\"selected_all_github_repos\":false,\"system_hints\":[\"picture_v2\"],\"serialization_metadata\":{\"custom_symbol_offsets\":[]}}}],\"parent_message_id\":\"client-created-root\",\"model\":\"gpt-5-3\",\"client_prepare_state\":\"success\",\"timezone_offset_min\":-120,\"timezone\":\"Europe/Warsaw\",\"conversation_mode\":{\"kind\":\"primary_assistant\"},\"enable_message_followups\":true,\"system_hints\":[\"picture_v2\"],\"supports_buffering\":true,\"supported_encodings\":[\"v1\"],\"client_contextual_info\":{\"is_dark_mode\":false,\"time_since_loaded\":1590,\"page_height\":778,\"page_width\":823,\"pixel_ratio\":2,\"screen_height\":800,\"screen_width\":1280,\"app_name\":\"chatgpt.com\"},\"paragen_cot_summary_display_override\":\"allow\",\"force_parallel_switch\":\"auto\"}",
-  "method": "POST"
-});
-
-// Response
-
-event: delta_encoding
-data: "v1"
-
-data: {"type": "resume_conversation_token", "kind": "topic", "token": "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb25kdWl0X3V1aWQiOiI1ZDFkNDI2ZDYyOTQ0YjRhOTI3N2RiYWFkMzJhNzJkMyIsImNvbmR1aXRfbG9jYXRpb24iOiIxMC4xMjguMTAyLjIwMDo4MzA3IiwiY2x1c3RlciI6InVuaWZpZWQtMTQxIiwiaWF0IjoxNzc3MDMxODUxLCJleHAiOjE3NzcwMzkwNTEsInR1cm5fdG9waWNfaWQiOiJjb252ZXJzYXRpb24tdHVybi1mNzE4MDNjYi1kMWJjLTQyN2QtOTRjYS0xMGZlZTRkNDlkNTYifQ.ToTXiDkobXjbn87dNnAdsIRGVjD46im0_t_qqVD4_NZN1OaAQytgBNOgJIsrcKztoxgmUMuv8iGg7oIwFcmB4Q", "conversation_id": "69eb5a4b-282c-83ea-b4f6-91ba9510bc9f"}
-
-event: delta
-data: {"p": "", "o": "add", "v": {"message": {"id": "c77318e0-2fd8-4c30-8280-0f2186c8f08d", "author": {"role": "assistant", "name": null, "metadata": {}}, "create_time": 1777031852.011247, "update_time": null, "content": {"content_type": "code", "language": "python3", "response_format_name": null, "text": "{\"skipped_mainline\":true}"}, "status": "in_progress", "end_turn": false, "weight": 1.0, "metadata": {"parent_id": "7bb36944-1457-4894-bf98-c96d4660f4f0", "turn_exchange_id": "f71803cb-d1bc-427d-94ca-10fee4d49d56"}, "recipient": "t2uay3k.sj1i4kz", "channel": null}, "conversation_id": "69eb5a4b-282c-83ea-b4f6-91ba9510bc9f", "error": null, "error_code": null}, "c": 0} 
-
-event: delta
-data: {"p": "/message/status", "o": "replace", "v": "finished_successfully"}  
-
-data: {"type": "conversation_async_status", "conversation_id": "69eb5a4b-282c-83ea-b4f6-91ba9510bc9f", "async_status": 7}
-
-data: {"type": "message_marker", "conversation_id": "69eb5a4b-282c-83ea-b4f6-91ba9510bc9f", "message_id": "d05cfa78-a8cc-4476-9c00-ef537588d275", "marker": "user_visible_token", "event": "first"}
-
-event: delta
-data: {"p": "", "o": "add", "v": {"message": {"id": "d05cfa78-a8cc-4476-9c00-ef537588d275", "author": {"role": "tool", "name": "t2uay3k.sj1i4kz", "metadata": {}}, "create_time": 1777031852.014949, "update_time": null, "content": {"content_type": "text", "parts": ["Przetwarzanie obrazu\n\nWiele os\u00f3b tworzy w tym momencie obrazy, wi\u0119c mo\u017ce to chwil\u0119 zaj\u0105\u0107. Powiadomimy Ci\u0119, gdy Tw\u00f3j obraz b\u0119dzie gotowy."]}, "status": "finished_successfully", "end_turn": true, "weight": 1.0, "metadata": {"ui_card": true, "ui_card_title": "Przetwarzanie obrazu", "ui_card_description": "Wiele os\u00f3b tworzy w tym momencie obrazy, wi\u0119c mo\u017ce to chwil\u0119 zaj\u0105\u0107. Powiadomimy Ci\u0119, gdy Tw\u00f3j obraz b\u0119dzie gotowy.", "ui_card_shimmer": true, "image_gen_async": false, "trigger_async_ux": false, "image_gen_task_id": "chatimagegen-us-prod.fck9d:user-p37Jofj79Tinez266xv7OhSy-a2de19ee-9e54-4269-b791-aa8dbbe2e30e:US", "image_gen_multi_stream": true, "block_interruption": true, "permissions": [{"type": "notification", "status": "requested", "notification_channel_id": "image_gen", "notification_channel_name": "ImageGen", "notification_priority": 4}], "parent_id": "c77318e0-2fd8-4c30-8280-0f2186c8f08d", "turn_exchange_id": "f71803cb-d1bc-427d-94ca-10fee4d49d56"}, "recipient": "all", "channel": null}, "conversation_id": "69eb5a4b-282c-83ea-b4f6-91ba9510bc9f", "error": null, "error_code": null}, "c": 1}    
-
-data: {"type": "title_generation", "title": "Text Change Request", "conversation_id": "69eb5a4b-282c-83ea-b4f6-91ba9510bc9f"}
-
-data: {"type": "server_ste_metadata", "metadata": {"conduit_prewarmed": true, "plan_type": "plus", "plan_type_bucket": "paid", "user_agent": "web_desktop", "service": null, "tool_name": null, "tool_invoked": false, "fast_convo": true, "warmup_state": "warm", "is_first_turn": null, "cluster_region": "polandcentral", "model_slug": "gpt-5-3", "region": null, "is_multimodal": null, "did_auto_switch_to_reasoning": false, "auto_switcher_race_winner": null, "is_autoswitcher_enabled": false, "is_search": null, "did_prompt_contain_image": true, "search_tool_call_count": null, "search_tool_query_types": null, "message_id": "c77318e0-2fd8-4c30-8280-0f2186c8f08d", "request_id": "ec342ae1-4bb6-43d1-acd4-1554763bd7ae", "turn_exchange_id": "f71803cb-d1bc-427d-94ca-10fee4d49d56", "turn_trace_id": "5f5fd37d-f5ed-4cfb-929c-e71afd9dfe59", "a32e6ebcb": null, "resume_with_websockets": true, "low_turn_topic_ttl": false, "streaming_async_status": false, "replace_stream_status": true, "temporal_conversation_turn": false, "turn_use_case": "image gen", "turn_mode": "default"}, "conversation_id": "69eb5a4b-282c-83ea-b4f6-91ba9510bc9f"}
-
-data: {"type": "message_stream_complete", "conversation_id": "69eb5a4b-282c-83ea-b4f6-91ba9510bc9f"}
-
-data: {"type": "conversation_detail_metadata", "banner_info": null, "blocked_features": [], "model_limits": [], "limits_progress": [{"feature_name": "deep_research", "remaining": 25, "reset_after": "2026-05-24T11:57:32.443716+00:00"}, {"feature_name": "odyssey", "remaining": 40, "reset_after": "2026-05-24T11:57:32.443731+00:00"}, {"feature_name": "file_upload", "remaining": 80, "reset_after": "2026-04-24T14:57:32.443736+00:00"}, {"feature_name": "paste_text_to_file", "remaining": 80, "reset_after": "2026-04-24T14:57:32.443740+00:00"}, {"feature_name": "image_gen", "remaining": 117, "reset_after": "2026-04-25T11:31:35.443744+00:00"}], "default_model_slug": "gpt-5-3", "atlas_mode_enabled": null, "conversation_id": "69eb5a4b-282c-83ea-b4f6-91ba9510bc9f"}
-
-data: [DONE]
-
-```
-
-- Download generated image
-
-```js
-fetch("https://chatgpt.com/backend-api/files/download/file_00000000ace4724388be72cf8df3b7a5?conversation_id=69eb5516-e774-83ea-94ff-7d64242a01ef&inline=false", {
-  "headers": {
-    "authorization": "Bearer <CHATGPT_BEARER_TOKEN>",
-  },
-  "method": "GET"
-});
-
-// Response
-
-
-// Pending - has uploaded image
-{"status":"success","download_url":"https://chatgpt.com/backend-api/estuary/content?id=file_000000002ca87246870a5face5cbfa35&ts=493619&p=fs&cid=1&sig=cc101cba4e8ebda7ab809e2912869e0ed30aedc720da363cb545e274f1930ed2&v=0","metadata":null,"file_name":null,"creation_time":null,"no_auth_user_upload":null,"mime_type":null,"file_size_bytes":null}
-
-// Fullfilled - has generated image
-{"status":"success","download_url":"https://chatgpt.com/backend-api/estuary/content?id=file_00000000ace4724388be72cf8df3b7a5&ts=493619&p=fs&cid=1&sig=59c3d17d1f7f6e9b4d4b77eeb9dae1701f8c485cd20d4aca1eb8e2b2bb179a93&v=0","metadata":null,"file_name":"user-p37Jofj79Tinez266xv7OhSy/fae4f6a4-a4ad-48d0-9073-058c6199863e.png","creation_time":null,"no_auth_user_upload":null,"mime_type":null,"file_size_bytes":1796482}
 ---
 
 ## Key Decisions
@@ -641,15 +566,15 @@ fetch("https://chatgpt.com/backend-api/files/download/file_00000000ace4724388be7
 - Voice tied to avatar (no separate voice selector)
 - Niches: `{ id, name, promptTone, defaultTags }` in config file
 - No database — in-memory state, lost on restart
-- Thumbnail face matching via `gpt-4o` chat completions with image inputs
+- Thumbnail generation via fal.ai `openai/gpt-image-2` — multi-image edit with public URLs (face + competitor thumb), 1536x1024 PNG. The OpenAI Platform `images/edits` flow worked but cost added up; the ChatGPT Plus private API was investigated and rejected (Sentinel proof-of-work + Turnstile + conduit tokens make it impossible to call from Node).
 - Face image for thumbnail generation is pulled from the selected HeyGen avatar's `photo_identity_s3_url` (exposed as `faceImageUrl` on `HeyGenAvatar`, camelCased at the boundary via zod). No user-upload surface — the avatar already is the face.
+- Competitor thumbnail URL (`img.youtube.com`) is preserved on the `Job` (`competitorThumbUrl`) alongside the local download path, so the fal.ai call can pass the URL directly without re-uploading.
 - HeyGen avatar list uses the private `api2.heygen.com/v2/avatar_group.private.list` endpoint with cookie auth (not the public API-key endpoint), because it returns `photo_identity_s3_url` and `default_voice_id` directly.
 
 ## Risks
 
-1. **gpt-4o face matching** — may not reliably reproduce faces. Fallback: composite (AI background + real photo overlay)
-2. **Claude CLI output parsing** — may wrap in markdown code blocks. Handle with explicit prompt + regex
-3. **HeyGen avatar/voice coupling** — verify `/v2/avatars` includes voice info; may need `/v2/voices` + mapping
+1. **Claude CLI output parsing** — may wrap in markdown code blocks. Handle with explicit prompt + regex
+2. **HeyGen avatar/voice coupling** — verify `/v2/avatars` includes voice info; may need `/v2/voices` + mapping
 
 ---
 

@@ -110,8 +110,11 @@ export class JobQueue extends EventEmitter {
         step: "fetching_thumbnail",
         progress: 15,
       });
-      const competitorThumbPath = await fetchCompetitorThumbnail(job.videoId);
-      this.patch(batch.id, job.id, { competitorThumbPath });
+      const competitor = await fetchCompetitorThumbnail(job.videoId);
+      this.patch(batch.id, job.id, {
+        competitorThumbPath: competitor.path,
+        competitorThumbUrl: competitor.url,
+      });
 
       this.patch(batch.id, job.id, {
         step: "generating_script",
@@ -175,7 +178,7 @@ export class JobQueue extends EventEmitter {
           videoId: job.videoId,
           title: script.title,
           faceImageUrl: batch.faceImageUrl,
-          competitorThumbPath,
+          competitorThumbUrl: competitor.url,
         });
         this.patch(batch.id, job.id, { thumbnailPath });
       }

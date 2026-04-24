@@ -33,6 +33,7 @@ export const JobSchema = z.object({
   videoPaths: z.array(z.string()).optional(),
   thumbnailPath: z.string().optional(),
   competitorThumbPath: z.string().optional(),
+  competitorThumbUrl: z.string().optional(),
 });
 export type Job = z.infer<typeof JobSchema>;
 

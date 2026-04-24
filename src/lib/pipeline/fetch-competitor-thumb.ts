@@ -5,24 +5,28 @@ const THUMBS_DIR = join(process.cwd(), "output", "thumbnails");
 
 const RESOLUTIONS = ["maxresdefault", "hqdefault", "mqdefault"] as const;
 
+export interface CompetitorThumbnail {
+  path: string;
+  url: string;
+}
+
 export async function fetchCompetitorThumbnail(
   videoId: string,
-): Promise<string> {
+): Promise<CompetitorThumbnail> {
   await mkdir(THUMBS_DIR, { recursive: true });
 
   let lastStatus = 0;
-  for (const res of RESOLUTIONS) {
-    const response = await fetch(
-      `https://img.youtube.com/vi/${videoId}/${res}.jpg`,
-    );
+  for (const resolution of RESOLUTIONS) {
+    const url = `https://img.youtube.com/vi/${videoId}/${resolution}.jpg`;
+    const response = await fetch(url);
     if (!response.ok) {
       lastStatus = response.status;
       continue;
     }
     const buf = Buffer.from(await response.arrayBuffer());
-    const outPath = join(THUMBS_DIR, `competitor_${videoId}.jpg`);
-    await writeFile(outPath, buf);
-    return outPath;
+    const path = join(THUMBS_DIR, `competitor_${videoId}.jpg`);
+    await writeFile(path, buf);
+    return { path, url };
   }
 
   throw new Error(
