@@ -12,7 +12,7 @@
 - **SSE** for real-time progress
 - **Local only** — no auth
 
-**Env keys:** `HEYGEN_API_KEY`, `HEYGEN_COOKIE` (for private `api2.heygen.com` endpoints), `OPENAI_API_KEY`, `YOUTUBE_TRANSCRIPT_API_TOKEN`
+**Env keys:** `HEYGEN_COOKIE` (all HeyGen calls use cookie auth on private `api2.heygen.com`), `OPENAI_API_KEY`, `YOUTUBE_TRANSCRIPT_API_TOKEN`
 
 ---
 
@@ -22,8 +22,8 @@
 2. Fetch competitor thumbnail — `img.youtube.com/vi/{id}/maxresdefault.jpg`
 3. Spawn Claude Code CLI — writes ~15k char script + metadata (title, tags, description)
 4. Split script — sentence boundaries, max 4,800 chars/scene
-5. Submit to HeyGen — `POST /v2/video/generate`
-6. Poll HeyGen — every 30s until complete
+5. Submit to HeyGen — per scene: private TTS stream (`api2.heygen.com/v2/online/text_to_speech.stream`) + `POST /v2/avatar/shortcut/submit` with the resulting audio_data (cookie auth)
+6. Poll HeyGen — per video_id: queue download via `/v1/pacific/collaboration/video.download`, poll workflow status every 30s until `COMPLETED`
 7. Download MP4 — save to `output/videos/`
 8. Generate thumbnail — ChatGPT `gpt-4o` with face ref + competitor thumbnail
 9. SSE updates at each step
@@ -451,15 +451,15 @@ fetch("https://api2.heygen.com/v1/pacific/collaboration/video.download/status?wo
 
 ## Phase 3: Pipeline Modules
 
-- [ ] `src/lib/pipeline/fetch-transcript.ts` — POST to `youtube-transcript.io/api/transcripts`
-- [ ] `src/lib/pipeline/fetch-competitor-thumb.ts` — download from `img.youtube.com`
-- [ ] `src/lib/pipeline/spawn-claude.ts` — `child_process.spawn("claude", ["-p", "--output-format", "json"])`, pipe prompt via stdin
-- [ ] `src/lib/pipeline/split-scenes.ts` — sentence-boundary splitter, max 4,800 chars
-- [ ] `src/lib/pipeline/heygen-submit.ts` — POST `/v2/video/generate`
-- [ ] `src/lib/pipeline/heygen-poll.ts` — 30s interval polling
-- [ ] `src/lib/pipeline/download-video.ts` — fetch MP4 → `output/videos/`
-- [ ] `src/lib/pipeline/generate-thumbnail.ts` — ChatGPT `gpt-4o` with face ref (from avatar's `faceImageUrl`) + competitor thumbnail
-- [ ] `src/lib/niches.ts` — niche configs (health, politics)
+- [x] `src/lib/pipeline/fetch-transcript.ts` — POST to `youtube-transcript.io/api/transcripts` (Basic auth via `YOUTUBE_TRANSCRIPT_API_TOKEN`, joins transcript segments into plain text)
+- [x] `src/lib/pipeline/fetch-competitor-thumb.ts` — download from `img.youtube.com` (falls back `maxresdefault` → `hqdefault` → `mqdefault`), saves to `output/thumbnails/competitor_{videoId}.jpg`
+- [x] `src/lib/pipeline/spawn-claude.ts` — `child_process.spawn("claude", ["-p", "--output-format", "json"])` with `shell: true` (Windows), prompt piped via stdin, strips markdown fences, parses `{ script, title, tags, description }` via zod
+- [x] `src/lib/pipeline/split-scenes.ts` — sentence-boundary splitter, `HEYGEN_SCENE_CHAR_LIMIT = 4800`; hard-splits any single sentence longer than the limit
+- [x] `src/lib/pipeline/heygen-submit.ts` — **cookie-authed** against `api2.heygen.com`; per scene: `POST /v2/online/text_to_speech.stream` (reads NDJSON until `sequence_number: -1`, collects `audio_url` + aggregated `word_timestamps`) then `POST /v2/avatar/shortcut/submit` with the `audio_data` (landscape, 720p); returns `string[]` of `video_id` (one per scene)
+- [x] `src/lib/pipeline/heygen-poll.ts` — **cookie-authed**; per video_id: `POST /v1/pacific/collaboration/video.download` → workflow_id, then 30s polling of `/v1/pacific/collaboration/video.download/status` until `COMPLETED`/`FAILED`, 30-min hard cap, `onTick(videoId, status)` callback; polls all video_ids in parallel; returns `string[]` of `download_url`
+- [x] `src/lib/pipeline/download-video.ts` — streams MP4 via `Readable.fromWeb` + `pipeline` → `output/videos/{videoId}.mp4`
+- [x] `src/lib/pipeline/generate-thumbnail.ts` — OpenAI `images/edits` with `gpt-image-1` (the API model powering "gpt-4o" image gen), multipart `image[]` with face ref + competitor thumb, `1536x1024` output; saves PNG to `output/thumbnails/{videoId}.png`
+- [x] `src/lib/niches.ts` — `NICHES` array of `NicheConfig` (health, politics) parsed through `NicheConfigSchema`; `getNiche(id)` helper throws on unknown id
 
 ## Phase 4: Queue + Orchestration
 
