@@ -84,3 +84,10 @@ export async function generate(
     })),
   };
 }
+
+export async function resubmit(input: {
+  batchId: string;
+  jobId: string;
+}): Promise<void> {
+  getQueue().resubmitJob(input.batchId, input.jobId);
+}

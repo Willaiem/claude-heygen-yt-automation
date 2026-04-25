@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { generate } from "@/app/actions";
+import { generate, resubmit } from "@/app/actions";
 import { AvatarSelector } from "@/components/AvatarSelector";
 import { NicheSelector } from "@/components/NicheSelector";
 import { ResultsTable } from "@/components/ResultsTable";
@@ -17,10 +17,12 @@ export default function Home() {
   const [selectedNiche, setSelectedNiche] = useState("health");
   const [batchId, setBatchId] = useState<string | null>(null);
   const [seedJobs, setSeedJobs] = useState<Job[]>([]);
+  const [subscriptionKey, setSubscriptionKey] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
 
-  const { jobs, isComplete } = useSSE(batchId, seedJobs);
+  const { jobs, isComplete } = useSSE(batchId, seedJobs, subscriptionKey);
   const isRunning = batchId !== null && !isComplete;
 
   const handleGenerate = async (urls: string[]) => {
@@ -40,6 +42,7 @@ export default function Home() {
         progress: 0,
       }));
       setSeedJobs(seeded);
+      setSubscriptionKey(0);
       setBatchId(response.batchId);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -48,7 +51,34 @@ export default function Home() {
     }
   };
 
+  const handleRetry = async (jobId: string) => {
+    if (!batchId) return;
+    setError(null);
+    setRetryingIds((prev) => {
+      const next = new Set(prev);
+      next.add(jobId);
+      return next;
+    });
+    try {
+      await resubmit({ batchId, jobId });
+      setSubscriptionKey((value) => value + 1);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setRetryingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(jobId);
+        return next;
+      });
+    }
+  };
+
   const canGenerate = Boolean(selectedAvatar?.voiceId);
+  const generateLabel = isSubmitting
+    ? "Submitting…"
+    : isRunning
+      ? "Running…"
+      : "Generate";
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-8">
@@ -68,6 +98,7 @@ export default function Home() {
         <UrlInput
           onGenerate={handleGenerate}
           disabled={!canGenerate || isSubmitting || isRunning}
+          label={generateLabel}
         />
         {error && (
           <p className="mt-2 text-xs text-red-400">{error}</p>
@@ -75,7 +106,11 @@ export default function Home() {
       </section>
 
       <section>
-        <ResultsTable jobs={jobs} />
+        <ResultsTable
+          jobs={jobs}
+          onRetry={handleRetry}
+          retryingIds={retryingIds}
+        />
       </section>
     </main>
   );

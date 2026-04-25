@@ -85,7 +85,9 @@ export class JobQueue extends EventEmitter {
     job.progress = 0;
     job.error = undefined;
     this.emitJob(batchId, job);
-    this.runJob(batch, job);
+    this.runJob(batch, job).finally(() => {
+      this.emitEvent({ type: "batch_complete", batchId: batch.id, data: {} });
+    });
   }
 
   subscribe(listener: QueueListener): void {

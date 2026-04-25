@@ -5,6 +5,8 @@ import type { Job, PipelineStep } from "@/lib/types";
 
 interface Props {
   jobs: Job[];
+  onRetry?: (jobId: string) => void;
+  retryingIds?: Set<string>;
 }
 
 const STEP_LABELS: Record<PipelineStep, string> = {
@@ -21,7 +23,7 @@ const STEP_LABELS: Record<PipelineStep, string> = {
   failed: "Failed",
 };
 
-export function ResultsTable({ jobs }: Props) {
+export function ResultsTable({ jobs, onRetry, retryingIds }: Props) {
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -70,20 +72,35 @@ export function ResultsTable({ jobs }: Props) {
                 {job.videoId}
               </td>
               <td className="px-4 py-3">
-                <span
-                  className={`inline-flex items-center gap-1.5 text-xs ${
-                    job.step === "completed"
-                      ? "text-green-400"
-                      : job.step === "failed"
-                        ? "text-red-400"
-                        : "text-yellow-400"
-                  }`}
-                >
-                  {job.step !== "completed" && job.step !== "failed" && (
-                    <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+                <div className="flex flex-col gap-1">
+                  <span
+                    className={`inline-flex items-center gap-1.5 text-xs ${
+                      job.step === "completed"
+                        ? "text-green-400"
+                        : job.step === "failed"
+                          ? "text-red-400"
+                          : "text-yellow-400"
+                    }`}
+                  >
+                    {job.step !== "completed" && job.step !== "failed" && (
+                      <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+                    )}
+                    {STEP_LABELS[job.step]}
+                    {job.step !== "completed" &&
+                      job.step !== "failed" &&
+                      job.step !== "queued" && (
+                        <span className="text-zinc-500">{job.progress}%</span>
+                      )}
+                  </span>
+                  {job.step === "failed" && job.error && (
+                    <span
+                      className="max-w-xs truncate text-[10px] text-red-300/80"
+                      title={job.error}
+                    >
+                      {job.error}
+                    </span>
                   )}
-                  {STEP_LABELS[job.step]}
-                </span>
+                </div>
               </td>
               <td className="px-4 py-3">
                 {job.thumbnailPath ? (
@@ -137,6 +154,16 @@ export function ResultsTable({ jobs }: Props) {
                         ? `Download (1/${job.videoPaths.length})`
                         : "Download"}
                     </a>
+                  )}
+                  {job.step === "failed" && onRetry && (
+                    <button
+                      type="button"
+                      onClick={() => onRetry(job.id)}
+                      disabled={retryingIds?.has(job.id)}
+                      className="rounded border border-red-500/40 px-2 py-1 text-xs text-red-300 hover:border-red-400 disabled:opacity-50"
+                    >
+                      {retryingIds?.has(job.id) ? "Retrying…" : "Retry"}
+                    </button>
                   )}
                 </div>
               </td>

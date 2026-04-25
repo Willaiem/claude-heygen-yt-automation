@@ -481,8 +481,8 @@ fetch("https://api2.heygen.com/v1/pacific/collaboration/video.download/status?wo
 
 ## Phase 6: Polish
 
-- [ ] `resubmit()` server action — retry failed jobs (queue already exposes `resubmitJob(batchId, jobId)`; action just needs to call it)
-- [ ] Error states and loading indicators
+- [x] `resubmit()` server action — thin wrapper over `queue.resubmitJob(batchId, jobId)`. `resubmitJob` now also re-emits `batch_complete` once the retried job settles, so the SSE stream closes cleanly after a retry. The frontend bumps a `subscriptionKey` on retry to reopen the EventSource (which had been closed by the prior `batch_complete`); the route's snapshot loop replays current state on reconnect.
+- [x] Error states and loading indicators — `ResultsTable` shows the per-job `error` message under the failed status and a Retry button that disables to "Retrying…" while the action is in flight; running jobs show a `progress%` next to the step label. Generate button label flips to `Submitting…` / `Running…` based on `isSubmitting` and `isRunning`.
 - [x] ~~YouTube URL parsing utility~~ — landed in Phase 4 as `src/lib/youtube.ts`
 
 ---

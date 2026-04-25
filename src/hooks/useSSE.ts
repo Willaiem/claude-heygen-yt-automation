@@ -12,6 +12,7 @@ export interface UseSSEResult {
 export function useSSE(
   batchId: string | null,
   initialJobs: Job[],
+  subscriptionKey: number = 0,
 ): UseSSEResult {
   const [jobs, setJobs] = useState<Job[]>(initialJobs);
   const [isComplete, setIsComplete] = useState(false);
@@ -22,7 +23,12 @@ export function useSSE(
   useEffect(() => {
     if (!batchId) return;
 
-    setJobs(initialJobsRef.current);
+    // On a fresh batch, replace seed jobs entirely.
+    // On reconnect (subscriptionKey bump for the same batch), keep the live jobs
+    // and let the server's snapshot re-send each job's current state.
+    if (subscriptionKey === 0) {
+      setJobs(initialJobsRef.current);
+    }
     setIsComplete(false);
 
     const source = new EventSource(
@@ -49,7 +55,7 @@ export function useSSE(
     };
 
     return () => source.close();
-  }, [batchId]);
+  }, [batchId, subscriptionKey]);
 
   return { jobs, isComplete };
 }
