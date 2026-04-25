@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import type { Job, PipelineStep } from "@/lib/types";
 
 interface Props {
@@ -20,11 +21,27 @@ const STEP_LABELS: Record<PipelineStep, string> = {
   failed: "Failed",
 };
 
-function copyToClipboard(text: string) {
-  navigator.clipboard.writeText(text);
-}
-
 export function ResultsTable({ jobs }: Props) {
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
+  }, []);
+
+  const copyToClipboard = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setToast(`${label} copied`);
+    } catch {
+      setToast(`Failed to copy ${label.toLowerCase()}`);
+    }
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(null), 1500);
+  };
+
   if (jobs.length === 0) {
     return (
       <p className="text-sm text-zinc-500">
@@ -34,6 +51,7 @@ export function ResultsTable({ jobs }: Props) {
   }
 
   return (
+    <>
     <div className="overflow-x-auto rounded-lg border border-zinc-800">
       <table className="w-full text-left text-sm">
         <thead className="border-b border-zinc-800 bg-zinc-900 text-xs text-zinc-400">
@@ -86,7 +104,7 @@ export function ResultsTable({ jobs }: Props) {
                   {job.title && (
                     <button
                       type="button"
-                      onClick={() => copyToClipboard(job.title!)}
+                      onClick={() => copyToClipboard(job.title!, "Title")}
                       className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-500"
                     >
                       Title
@@ -95,7 +113,7 @@ export function ResultsTable({ jobs }: Props) {
                   {job.tags && (
                     <button
                       type="button"
-                      onClick={() => copyToClipboard(job.tags!.join(", "))}
+                      onClick={() => copyToClipboard(job.tags!.join(", "), "Tags")}
                       className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-500"
                     >
                       Tags
@@ -104,7 +122,7 @@ export function ResultsTable({ jobs }: Props) {
                   {job.description && (
                     <button
                       type="button"
-                      onClick={() => copyToClipboard(job.description!)}
+                      onClick={() => copyToClipboard(job.description!, "Description")}
                       className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-500"
                     >
                       Desc
@@ -127,5 +145,15 @@ export function ResultsTable({ jobs }: Props) {
         </tbody>
       </table>
     </div>
+    {toast && (
+      <div
+        role="status"
+        aria-live="polite"
+        className="pointer-events-none fixed bottom-6 right-6 z-50 rounded-md border border-zinc-700 bg-zinc-900/95 px-4 py-2 text-sm text-zinc-100 shadow-lg"
+      >
+        {toast}
+      </div>
+    )}
+    </>
   );
 }
