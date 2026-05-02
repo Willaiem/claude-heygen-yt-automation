@@ -27,7 +27,7 @@ Supports batch processing — paste multiple URLs and they queue up automaticall
 | Script writing | Claude Code CLI (`child_process.spawn`, prompt over stdin) |
 | Thumbnails | fal.ai `openai/gpt-image-2` (multi-image edit, public URLs in) |
 | Transcripts | youtube-transcript.io API |
-| Video post-processing | Remotion (in `remotion/` subfolder, for future use) |
+| Video post-processing | Remotion (under `src/remotion/`, for future use) |
 | Progress updates | Server-Sent Events (SSE) |
 
 ## Prerequisites
@@ -99,9 +99,9 @@ claude-heygen-yt-automation/
 │   │   └── pipeline/           # fetch-transcript, fetch-competitor-thumb, spawn-claude,
 │   │                           # split-scenes, heygen-submit, heygen-poll, download-video,
 │   │                           # generate-thumbnail
-│   └── hooks/
-│       └── useSSE.ts           # Client-side SSE hook
-├── remotion/                   # Remotion setup for video post-processing (separate package)
+│   ├── hooks/
+│   │   └── useSSE.ts           # Client-side SSE hook
+│   └── remotion/               # Remotion compositions for video post-processing
 ├── output/
 │   ├── videos/                 # Downloaded MP4s
 │   └── thumbnails/             # Generated thumbnails (and competitor refs)
@@ -119,12 +119,10 @@ claude-heygen-yt-automation/
 
 ## Remotion (post-processing)
 
-Remotion lives in `remotion/` for future video post-processing (intros, outros, overlays). To use it independently:
+Remotion compositions live under `src/remotion/`, sharing the root `package.json` and `node_modules`. Launch the Studio:
 
 ```bash
-cd remotion
-npm install
-npx remotion studio
+npm run remotion:studio
 ```
 
 ## License

@@ -6,7 +6,7 @@
 
 ## Architecture
 
-- **Next.js app at root**, Remotion in `remotion/` subfolder for future post-processing
+- **Next.js app at root**, Remotion under `src/remotion/` (single `package.json`)
 - **Single page UI**: avatar selector + niche dropdown + face upload + multi-URL input + results table
 - **Queue-based**: sequential Claude Code CLI spawning, parallel HeyGen polling
 - **SSE** for real-time progress
@@ -485,6 +485,168 @@ fetch("https://api2.heygen.com/v1/pacific/collaboration/video.download/status?wo
 - [x] Error states and loading indicators — `ResultsTable` shows the per-job `error` message under the failed status and a Retry button that disables to "Retrying…" while the action is in flight; running jobs show a `progress%` next to the step label. Generate button label flips to `Submitting…` / `Running…` based on `isSubmitting` and `isRunning`.
 - [x] ~~YouTube URL parsing utility~~ — landed in Phase 4 as `src/lib/youtube.ts`
 
+## Phase 7: Remotion post-processing — stitched final + AI-generated infographic slides
+
+Today the pipeline ends with N per-scene MP4s + a thumbnail. Phase 7 extends every job with a single 1920×1080 final MP4 that stitches the scenes back-to-back via Remotion `<Sequence>` and overlays AI-generated infographic slides timed to the avatar's speech. Auto-runs at the end of every job; gracefully degrades when sub-steps fail.
+
+### Architecture decisions
+
+- **Aspect ratio:** 1920×1080, 30fps, H.264 CRF 18.
+- **Layout:** avatar full-frame default; per-slide cutaway either shrinks the avatar to a top-right circle PIP (~18% width) or hides it (cover). Default per slide type, planner can override per slide.
+- **Slide source:** separate Claude planner pass — does NOT modify the existing script-generation prompt.
+- **Slide catalog (7 types):** `title`, `bullets`, `stat`, `diagram` (one large illustration + callouts), `steps` (3-panel flow with arrows, defaults to PIP), `warning_grid` (4-panel, defaults to cover), `action_grid` (5–6 numbered panels, defaults to cover).
+- **Image generation:** fal.ai `openai/gpt-image-2` text-to-image (NOT edit mode). Planner emits image prompts inline. `diagram`: 1536×1024. All grid panels: 1024×1024.
+- **Slide timing:** planner emits `{ startPhrase, end: { kind: "phrase", phrase } | { kind: "hold", seconds } }`. New module fuzzy-matches against `word_timestamps` (currently discarded inside `heygen-submit.ts` — must be persisted) to resolve frames.
+- **Stitching:** native Remotion `<Sequence>` per scene, no ffmpeg.
+- **Render integration:** programmatic SSR via `@remotion/bundler` + `@remotion/renderer`; bundle cached on `globalThis`; `onProgress` → SSE.
+- **Project layout:** consolidate — move `remotion/` into `src/remotion/`, single root `package.json`, single `node_modules`.
+- **Failure isolation:** planner failure → bare-stitched fallback; image-gen partial failure → hard fail; editing failure → `editing_failed` step with per-scene MP4s still exposed and a `Re-edit` button.
+- **Style:** single unified theme for v1 (health-style palette). Per-niche theming deferred.
+- **Polish v1 defaults:** hard cuts between scenes; per-slide 200ms fade+slide-up enter / 150ms fade-out exit; no burned captions, music, or intro/outro.
+
+### Pipeline flow (revised)
+
+`PipelineStepSchema` gains the entries marked `(new)`:
+
+```
+queued
+fetching_transcript
+fetching_thumbnail
+generating_script
+splitting_scenes
+submitting_heygen          ← also captures sceneWords (was discarded)
+─── fork ───────────────────────────────────────────────────────────
+  Branch A:                       │   Branch B (new, parallel):
+    polling_heygen                │     planning_slides       (new, gated on claudeChain)
+    downloading_video             │     generating_slide_images (new, fal.ai parallel)
+    generating_thumbnail          │
+─── join ───────────────────────────────────────────────────────────
+resolving_slide_timing     (new)
+editing                    (new) ← Remotion programmatic render
+completed
+slides_failed              (new) ← planner failed → bare-stitched fallback
+editing_failed             (new) ← Remotion failed → per-scene MP4s usable; reedit() retries
+failed
+```
+
+Branch B finishes inside HeyGen's 5–10 min poll window, so wall-clock cost over current pipeline is ~zero.
+
+### 7.0 — Project consolidation (one-time refactor)
+
+- [x] `git mv remotion/src/* src/remotion/` (preserves HelloWorld scaffolding temporarily as a smoke test)
+- [x] `git mv remotion/remotion.config.ts src/remotion/`
+- [x] Merge Remotion deps into root `package.json` at version 4.0.451: `remotion`, `@remotion/cli`, `@remotion/zod-types`, `@remotion/tailwind-v4`, `@remotion/bundler`, `@remotion/renderer`. Reconcile React (root 19.1 vs remotion 19.2.3) and Tailwind (root 4.1.4 vs remotion 4.0.0) — bumped root React to 19.2.3 / left Tailwind at 4.1.4
+- [x] Delete `remotion/` folder (all of `node_modules/`, `package.json`, `package-lock.json`, `.prettierrc`, `eslint.config.mjs`, `tsconfig.json`)
+- [x] Drop `"remotion"` from `tsconfig.json` excludes
+- [x] `next.config.ts` — added `serverExternalPackages: ['@remotion/bundler', '@remotion/renderer', 'remotion']`
+- [x] Added npm scripts `remotion:studio` / `remotion:bundle` (with `--config src/remotion/remotion.config.ts` since the config moved out of project root). `next lint` already covers `src/remotion/`, so no separate Remotion lint script.
+- [x] Updated `CLAUDE.md` (Commands section is now "Single Node package") and `README.md` (Tech Stack, Project Structure, Remotion section)
+- [x] Verify: `npm install` clean (184 packages added), `npx tsc --noEmit` passes, `npm run remotion:studio` builds in ~7s and serves on localhost:3001, `npm run dev` ready in 1.7s on localhost:3000
+
+### 7.1 — Schema additions (`src/lib/types.ts`)
+
+- [ ] `WordTimestampSchema` — `{ word, start, end }`
+- [ ] Extend `JobSchema`: `sceneWords?: WordTimestamp[][]`, `slidePlan?: SlidePlan`, `slideImagePaths?: string[][]`, `finalVideoPath?: string`, `editError?: string`
+- [ ] Extend `PipelineStepSchema`: `planning_slides`, `generating_slide_images`, `resolving_slide_timing`, `editing`, `slides_failed`, `editing_failed`
+- [ ] `SlideSchema` — discriminated union over the 7 slide types. Each variant extends `SlideBaseSchema` with `{ id, startPhrase, end: ({kind:"phrase", phrase} | {kind:"hold", seconds}), layout?: "pip"|"cover" }`. Per-type props: title `{ text, subtitle? }`; bullets `{ heading?, bullets[1..5] }`; stat `{ value, label }`; diagram `{ title, subtitle?, imagePrompt, callouts[], bottomCaption? }`; steps `{ title, subtitle?, steps[3]: { imagePrompt, label, caption }, footerCaption? }`; warning_grid `{ title, subtitle?, panels[4]: { imagePrompt, label, caption, boldFooter? }, footerBanner?, bottomCaption? }`; action_grid `{ title, subtitle?, actions[5..6]: { number, imagePrompt, label, description }, bottomCaption? }`
+- [ ] `SlidePlanSchema` — `{ scenes: { sceneIndex, slides: Slide[].max(8) }[] }`
+- [ ] `JobRenderPropsSchema` — fully resolved input bundle for Remotion: per-scene `{ videoUrl, durationSec, slides: Array<{ ...slideProps, startFrame, endFrame, layout, resolvedImagePaths? }> }`
+
+### 7.2 — Surface `sceneWords` from HeyGen submit
+
+- [ ] `src/lib/pipeline/heygen-submit.ts` — change return type to `Promise<{ videoIds: string[]; sceneWords: WordTimestamp[][] }>`. The `generateTts` function already collects `word_timestamps`; just plumb them up
+- [ ] `src/lib/queue.ts` — update caller; `patch()` `sceneWords` onto the job alongside `heygenVideoIds`
+
+### 7.3 — Slide planner
+
+- [ ] `src/lib/prompts/slide-planner.ts` — exports `buildSlidePlannerPrompt({ niche, scene, sceneIndex, sceneWords, title })`. Demands `startPhrase`/`endPhrase` be exact substrings of the scene text; ~1 slide per 15s of audio guideline; hard `max(8)` cap; niche tone from `niche.promptTone`
+- [ ] `src/lib/pipeline/plan-slides.ts` — exports `planSlides(...)`. Reuses `spawnClaude` (same stdin pipe + fence-stripping). Parses through `SlidePlanSchema`
+- [ ] In `queue.ts`, planner spawn uses the existing `runClaudeSerial` chain — no extra serialization
+
+### 7.4 — Slide image generation
+
+- [ ] `src/lib/pipeline/generate-slide-images.ts` — collects every `imagePrompt`, fires fal.ai calls via `Promise.all`. Reuses auth pattern from `generate-thumbnail.ts` (no `image_urls`, this is text-to-image not edit). Saves to `output/slide-images/{jobId}/{sceneIdx}_{slideIdx}_{panelIdx}.png`
+- [ ] Per-type `image_size`: diagram `{ width: 1536, height: 1024 }`, grid panels `{ width: 1024, height: 1024 }`
+- [ ] Partial failure here is a hard fail (broken slides look worse than no slides)
+
+### 7.5 — Slide timing resolver
+
+- [ ] `src/lib/pipeline/resolve-slide-timing.ts` — given a slide's `{ startPhrase, end }` + scene's `WordTimestamp[]`, return `{ startFrame, endFrame }` at fps 30. Algorithm: lowercase + strip punctuation; sliding-window match; pick earliest. If `end.kind === "hold"`, `endFrame = startFrame + Math.round(end.seconds * 30)`. If unmatched, fall back to scene midpoint with logged warning (not a failure)
+- [ ] Build full `JobRenderProps` here too (each scene's `videoUrl` from `/api/file?path=...`, `durationSec` from the scene's last word's `end`)
+
+### 7.6 — Remotion components (under `src/remotion/`)
+
+- [ ] `theme.ts` — single unified theme (navy `#0e2a4d`, light-blue bg `#cfe7f5`, red accent `#d83a3a`, Inter stack)
+- [ ] `slides/_primitives.tsx` — `<HeaderBar>`, `<FooterCaption>`, `<PanelCard>`, `<SirenBadge>`, `<NumberedBadge>`, `<CalloutPill>`, `<EnterExit>` (200ms fade+slide-up enter, 150ms fade-out exit)
+- [ ] `slides/TitleSlide.tsx`
+- [ ] `slides/BulletsSlide.tsx`
+- [ ] `slides/StatSlide.tsx`
+- [ ] `slides/DiagramSlide.tsx` — central `<Img>` with absolute-positioned `<CalloutPill>`s by `position` enum
+- [ ] `slides/StepsSlide.tsx` — 3 panels horizontal with arrow connectors
+- [ ] `slides/WarningGridSlide.tsx` — 4-panel emergency grid
+- [ ] `slides/ActionGridSlide.tsx` — N-panel numbered grid
+- [ ] `slides/{Type}SlideDesign.tsx` — Studio-only wrappers with rich `defaultProps` for visual iteration without running the pipeline
+- [ ] `avatar/AvatarLayer.tsx` — avatar `<OffthreadVideo>` + PIP/cover toggle (PIP: top-right circle, ~18% width; Cover: layer hidden for slide's frame range)
+- [ ] `compositions/JobComposition.tsx` — receives `JobRenderProps`. One `<Sequence from={cumulativeFrames}>` per scene; inside each, `<AvatarLayer>` + scene's slides positioned by resolved `startFrame`/`endFrame`. Uses `calculateMetadata` for dynamic `durationInFrames`
+- [ ] `compositions/JobPreview.tsx` — wrapper passing `fixtures/sample-job.ts` data into `JobComposition`
+- [ ] `fixtures/sample-job.ts` — hand-built `JobRenderProps`, one scene + two slides, points at a local test MP4
+- [ ] `Root.tsx` — registers `JobComposition` (production), `JobPreview`, and the 7 `SlideDesign` comps
+
+### 7.7 — Render orchestration
+
+- [ ] `src/lib/pipeline/render-final.ts` — exports `renderFinal({ jobRenderProps, videoId, onProgress })`. First call: `bundle({ entryPoint: 'src/remotion/index.ts' })`, cache served URL on `globalThis.__remotionBundle`. Then `selectComposition` + `renderMedia({ codec: 'h264', crf: 18, fps: 30, outputLocation: 'output/final/{videoId}.mp4', onProgress })`. Also writes `output/final/{videoId}.props.json` next to the MP4 (debug fixture — copy into `fixtures/sample-job.ts` to reproduce in Studio)
+- [ ] `onProgress({ progress })` calls `patch(batchId, jobId, { progress: 95 + Math.round(progress * 5) })` for live render percentage in SSE
+
+### 7.8 — Queue integration
+
+- [ ] `src/lib/queue.ts` — extend `runJob` with the two-branch fork after `splitting_scenes`. Branch A: `submitting_heygen` → `polling_heygen` → `downloading_video` → `generating_thumbnail` (existing path, plus emitting `sceneWords`). Branch B (new): `planning_slides` → `generating_slide_images`. Join with `Promise.all`. Then sequential: `resolving_slide_timing` → `editing`
+- [ ] Hybrid failure handling: try/catch around branch B's planner — on failure, emit `slides_failed`, set `slidePlan = { scenes: scenes.map((_, i) => ({ sceneIndex: i, slides: [] })) }`, continue. Image-gen failure throws normally → job `failed`. Wrap `renderFinal` in its own try/catch — on failure, set `step: editing_failed` + `editError`, leave job NOT marked `failed`
+- [ ] Add `reeditJob(batchId, jobId)` — re-runs only `resolving_slide_timing` + `editing`. Mirrors `resubmitJob` (resets step, re-emits `batch_complete` on settle)
+
+### 7.9 — Server action + UI
+
+- [ ] `src/app/actions.ts` — add `reedit(batchId, jobId)` mirroring `resubmit()`
+- [ ] `src/components/ResultsTable.tsx` — render Final-video download link via `/api/file?path=output/final/{videoId}.mp4&download=1` when `Job.finalVideoPath` set; render `Re-edit` button when `Job.step === "editing_failed"`; display `Job.editError` distinctly from `Job.error`
+- [ ] No changes needed to `useSSE.ts` — `SSEEventSchema.data` is `JobSchema.partial()`, new fields propagate automatically
+
+### 7.10 — Documentation
+
+- [ ] Update `CLAUDE.md` Architecture/Pipeline section: extend per-URL pipeline list with slide planner + image gen + resolve timing + Remotion render. Add "Remotion editing" subsection under Non-obvious conventions covering `JobRenderProps` schema, props.json debug-dump, two-branch parallelism
+
+### Patterns to reuse (don't reimplement)
+
+- **`spawnClaude` (`src/lib/pipeline/spawn-claude.ts`)** — used as-is for the planner. stdin-piping + fence-stripping works for any JSON-output prompt
+- **`runClaudeSerial` (`src/lib/queue.ts:195`)** — existing `claudeChain` already serializes Claude spawns; planner slots in with zero new gating
+- **fal.ai REST pattern (`src/lib/pipeline/generate-thumbnail.ts`)** — copy auth header + sync-REST shape; only differences are `image_size` and dropping `image_urls`
+- **`/api/file/route.ts`** — already serves anything under `output/` with directory-traversal protection. Remotion's Chromium fetches videos + slide images through it
+- **`patch()` + `emitJob` in `JobQueue`** — same path for emitting render progress
+- **Schema-as-source-of-truth convention** — every new shape `z.infer`'d from a zod schema; planner output `.parse()`'d at the boundary; Remotion uses `@remotion/zod-types` so Studio gets a typed schema editor for fixtures
+
+### Phase 7 verification
+
+End-to-end:
+
+1. `npm install` at root after consolidation
+2. `npm run remotion:studio` — Studio loads, all design comps appear, `JobPreview` renders sample fixture
+3. `npm run dev` — page loads, generate flow still works for an existing-style job (sanity check refactor didn't regress Phases 1–6)
+4. Submit one URL — pipeline walks through new steps, produces `output/final/{videoId}.mp4` + `{videoId}.props.json`
+5. Copy `{videoId}.props.json` into `fixtures/sample-job.ts`, reload Studio — reproduces rendered output exactly (validates debug-dump)
+6. Trigger planner failure (block `claude` binary or feed malformed niche) — job → `slides_failed`, then bare-stitched render, finishes `editing` complete with watchable no-slides MP4
+7. Trigger Remotion failure (rename a slide component import) — job → `editing_failed`, per-scene MP4s + thumbnail still in UI, `Re-edit` button visible. Fix bug, click Re-edit — re-runs only timing + editing
+8. 3-URL batch — Branch B finishes during HeyGen polling; total wall-clock ≤ current pipeline
+
+Type/lint:
+
+- `npx tsc --noEmit` — passes for entire repo (no more `remotion/` exclusion to hide errors)
+- `npm run lint` — passes
+
+### Phase 7 risks
+
+1. **React/Tailwind version reconciliation during 7.0** — bumping root React 19.1 → 19.2.3 may surface subtle Next.js 15 incompatibilities. Mitigation: smoke-test `npm run dev` immediately after the bump, before touching anything else
+2. **Remotion Chromium download on first `bundle()`** — first run pulls Chromium (~150 MB). One-time cost; `.gitignore` already covers it via `node_modules/`
+3. **fal.ai cost / latency on grid slides** — a video with 5 grid slides averaging 4 panels each = 20 image gens × ~$0.04 × ~3s = ~$0.80 and ~60s per video. Acceptable but worth monitoring; consider per-job image budget cap if it gets out of hand
+4. **Phrase matching robustness** — Claude could emit a `startPhrase` that doesn't exactly substring-match (paraphrased, punctuation drift). Mitigation: fuzzy match in `resolve-slide-timing.ts` + scene-midpoint fallback + logged warning. Monitor failure rate in early runs and tighten planner prompt if needed
+
 ---
 
 ## File Structure
@@ -495,10 +657,6 @@ claude-heygen-yt-automation/
 ├── next.config.ts
 ├── package.json
 ├── tsconfig.json
-├── remotion/
-│   ├── remotion.config.ts
-│   ├── package.json
-│   └── src/
 ├── output/
 │   ├── videos/                     # Downloaded MP4s
 │   └── thumbnails/                 # Generated thumbnails
@@ -531,8 +689,12 @@ claude-heygen-yt-automation/
 │   │       ├── heygen-poll.ts
 │   │       ├── download-video.ts
 │   │       └── generate-thumbnail.ts
-│   └── hooks/
-│       └── useSSE.ts
+│   ├── hooks/
+│   │   └── useSSE.ts
+│   └── remotion/
+│       ├── remotion.config.ts
+│       ├── index.ts                # registerRoot entry point
+│       └── Root.tsx                # Composition registry
 ```
 
 ---

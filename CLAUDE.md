@@ -4,19 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-Two separate Node packages live in this repo. Root `package.json` is the Next.js web app; `remotion/package.json` is an isolated Remotion project for future post-processing. `tsconfig.json` excludes `remotion/`, so typechecks from root don't cover it.
+Single Node package. Next.js app and Remotion compositions share one `package.json` and `node_modules`. Remotion sources live under `src/remotion/`; `@remotion/bundler` and `@remotion/renderer` are flagged as `serverExternalPackages` in `next.config.ts` so Next leaves them out of its bundle.
 
-**Root (Next.js app)**
-- `npm run dev` — start dev server on `localhost:3000`
+- `npm run dev` — start Next dev server on `localhost:3000`
 - `npm run build` — Next production build
 - `npm run start` — serve production build
-- `npm run lint` — `next lint`
-- `npx tsc --noEmit` — typecheck only (no lint)
-
-**Remotion (`cd remotion` first)**
-- `npm run dev` — `remotion studio`
-- `npm run build` — `remotion bundle`
-- `npm run lint` — `eslint src && tsc`
+- `npm run lint` — `next lint` (covers `src/remotion/` since it lives under `src/`)
+- `npx tsc --noEmit` — typecheck the entire repo (no `remotion/` exclusion anymore)
+- `npm run remotion:studio` — launch Remotion Studio against `src/remotion/index.ts`
+- `npm run remotion:bundle` — bundle Remotion compositions
 
 ## Architecture
 
@@ -68,4 +64,4 @@ All cross-boundary types live in `src/lib/types.ts`. **Every exported type is `z
 - **`ROADMAP.md` is the single source of truth for project progress.** Check off items there as they land. Phases 0–1 and the avatars portion of Phase 2 are done; Phases 3–6 are not. When scope changes, update ROADMAP (strike out removed items, add key-decision notes) — don't silently drop them.
 - Commit message style from existing history: lowercase conventional-commit prefix (`chore:`, `feat:`). Keep subjects short; use the body for the why. **Do not add a `Co-Authored-By: Claude ...` trailer** — the user's existing commits don't have it and they've asked to keep it that way.
 - Path alias `@/*` → `src/*` (see `tsconfig.json`).
-- Repo root is a git repo; `remotion/` has its own `node_modules` and `package-lock.json` but is not a separate git repo.
+- Repo root is a git repo with a single `node_modules` and `package-lock.json` shared by Next and Remotion.
