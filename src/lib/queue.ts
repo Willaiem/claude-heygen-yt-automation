@@ -1,16 +1,21 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 
 import { getNiche } from "@/lib/niches";
 import { downloadVideo } from "@/lib/pipeline/download-video";
 import { fetchCompetitorThumbnail } from "@/lib/pipeline/fetch-competitor-thumb";
 import { fetchTranscript } from "@/lib/pipeline/fetch-transcript";
+import { generateSlideImages } from "@/lib/pipeline/generate-slide-images";
 import { generateThumbnail } from "@/lib/pipeline/generate-thumbnail";
 import { pollHeyGen } from "@/lib/pipeline/heygen-poll";
 import { submitHeyGen } from "@/lib/pipeline/heygen-submit";
+import { planSlides } from "@/lib/pipeline/plan-slides";
+import { renderFinal } from "@/lib/pipeline/render-final";
+import { resolveSlideTiming } from "@/lib/pipeline/resolve-slide-timing";
 import {
-  spawnClaude,
-  type ClaudeScript,
+  ClaudeScriptSchema,
+  spawnClaudeJson,
 } from "@/lib/pipeline/spawn-claude";
 import { splitScenes } from "@/lib/pipeline/split-scenes";
 import type {
@@ -18,6 +23,8 @@ import type {
   Job,
   NicheConfig,
   SSEEvent,
+  SlidePlan,
+  WordTimestamp,
 } from "@/lib/types";
 import { parseYouTubeUrl } from "@/lib/youtube";
 
@@ -84,10 +91,43 @@ export class JobQueue extends EventEmitter {
     job.step = "queued";
     job.progress = 0;
     job.error = undefined;
+    job.editError = undefined;
     this.emitJob(batchId, job);
     this.runJob(batch, job).finally(() => {
       this.emitEvent({ type: "batch_complete", batchId: batch.id, data: {} });
     });
+  }
+
+  reeditJob(batchId: string, jobId: string): void {
+    const batch = this.batches.get(batchId);
+    if (!batch) throw new Error(`Unknown batch: ${batchId}`);
+    const job = batch.jobs.find((candidate) => candidate.id === jobId);
+    if (!job) throw new Error(`Unknown job: ${jobId}`);
+    if (
+      !job.slidePlan ||
+      !job.sceneWords ||
+      !job.videoPaths ||
+      !job.slideImagePaths
+    ) {
+      throw new Error(
+        `Cannot re-edit ${jobId}: missing prerequisite job state (slidePlan/sceneWords/videoPaths/slideImagePaths)`,
+      );
+    }
+    job.step = "resolving_slide_timing";
+    job.progress = 92;
+    job.editError = undefined;
+    this.emitJob(batchId, job);
+
+    void this.runEditingTail(batch, job, {
+      slidePlan: job.slidePlan,
+      sceneWords: job.sceneWords,
+      videoPaths: job.videoPaths,
+      slideImagePaths: job.slideImagePaths,
+    })
+      .catch(() => undefined)
+      .finally(() => {
+        this.emitEvent({ type: "batch_complete", batchId: batch.id, data: {} });
+      });
   }
 
   subscribe(listener: QueueListener): void {
@@ -122,7 +162,11 @@ export class JobQueue extends EventEmitter {
         step: "generating_script",
         progress: 25,
       });
-      const script = await this.runClaudeSerial(buildClaudePrompt(transcript, niche));
+      const script = await this.runClaudeSerial(
+        buildClaudePrompt(transcript, niche),
+        ClaudeScriptSchema,
+        "ClaudeScript",
+      );
       this.patch(batch.id, job.id, {
         script: script.script,
         title: script.title,
@@ -149,51 +193,202 @@ export class JobQueue extends EventEmitter {
       });
       this.patch(batch.id, job.id, { heygenVideoIds, sceneWords });
 
-      this.patch(batch.id, job.id, {
-        step: "polling_heygen",
-        progress: 65,
+      // ───── Two-branch fork ─────
+      const branchA = this.runBranchA(batch, job, {
+        scenes,
+        heygenVideoIds,
+        title: script.title,
+        competitorUrl: competitor.url,
       });
-      const downloadUrls = await pollHeyGen(heygenVideoIds);
-
-      this.patch(batch.id, job.id, {
-        step: "downloading_video",
-        progress: 80,
+      const branchB = this.runBranchB(batch, job, {
+        niche,
+        title: script.title,
+        scenes,
+        sceneWords,
       });
-      const videoPaths = await Promise.all(
-        downloadUrls.map((url, sceneIndex) =>
-          downloadVideo(
-            url,
-            scenes.length > 1
-              ? `${job.videoId}_${sceneIndex}`
-              : job.videoId,
-          ),
-        ),
-      );
-      this.patch(batch.id, job.id, { videoPaths });
+      const [branchAResult, branchBResult] = await Promise.all([
+        branchA,
+        branchB,
+      ]);
+      // ───────────────────────────
 
-      if (batch.faceImageUrl) {
-        this.patch(batch.id, job.id, {
-          step: "generating_thumbnail",
-          progress: 92,
-        });
-        const thumbnailPath = await generateThumbnail({
-          videoId: job.videoId,
-          title: script.title,
-          faceImageUrl: batch.faceImageUrl,
-          competitorThumbUrl: competitor.url,
-        });
-        this.patch(batch.id, job.id, { thumbnailPath });
-      }
-
-      this.patch(batch.id, job.id, { step: "completed", progress: 100 });
+      await this.runEditingTail(batch, job, {
+        slidePlan: branchBResult.slidePlan,
+        sceneWords,
+        videoPaths: branchAResult.videoPaths,
+        slideImagePaths: branchBResult.slideImagePaths,
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.patch(batch.id, job.id, { step: "failed", error: message });
     }
   }
 
-  private runClaudeSerial(prompt: string): Promise<ClaudeScript> {
-    const next = this.claudeChain.then(() => spawnClaude(prompt));
+  private async runBranchA(
+    batch: Batch,
+    job: Job,
+    input: {
+      scenes: string[];
+      heygenVideoIds: string[];
+      title: string;
+      competitorUrl: string;
+    },
+  ): Promise<{ videoPaths: string[] }> {
+    this.patch(batch.id, job.id, {
+      step: "polling_heygen",
+      progress: 65,
+    });
+    const downloadUrls = await pollHeyGen(input.heygenVideoIds);
+
+    this.patch(batch.id, job.id, {
+      step: "downloading_video",
+      progress: 80,
+    });
+    const videoPaths = await Promise.all(
+      downloadUrls.map((url, sceneIndex) =>
+        downloadVideo(
+          url,
+          input.scenes.length > 1
+            ? `${job.videoId}_${sceneIndex}`
+            : job.videoId,
+        ),
+      ),
+    );
+    this.patch(batch.id, job.id, { videoPaths });
+
+    if (batch.faceImageUrl) {
+      this.patch(batch.id, job.id, {
+        step: "generating_thumbnail",
+        progress: 88,
+      });
+      const thumbnailPath = await generateThumbnail({
+        videoId: job.videoId,
+        title: input.title,
+        faceImageUrl: batch.faceImageUrl,
+        competitorThumbUrl: input.competitorUrl,
+      });
+      this.patch(batch.id, job.id, { thumbnailPath });
+    }
+    return { videoPaths };
+  }
+
+  private async runBranchB(
+    batch: Batch,
+    job: Job,
+    input: {
+      niche: NicheConfig;
+      title: string;
+      scenes: string[];
+      sceneWords: WordTimestamp[][];
+    },
+  ): Promise<{ slidePlan: SlidePlan; slideImagePaths: string[][] }> {
+    let slidePlan: SlidePlan;
+    try {
+      this.patch(batch.id, job.id, {
+        step: "planning_slides",
+        progress: 60,
+      });
+      slidePlan = await planSlides({
+        niche: input.niche,
+        title: input.title,
+        scenes: input.scenes,
+        sceneWords: input.sceneWords,
+        runClaude: (prompt, schema, label) =>
+          this.runClaudeSerial(prompt, schema, label),
+      });
+      this.patch(batch.id, job.id, { slidePlan });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[queue] slide planner failed for job ${job.id}: ${message}`,
+      );
+      slidePlan = {
+        scenes: input.scenes.map((_, sceneIndex) => ({
+          sceneIndex,
+          slides: [],
+        })),
+      };
+      this.patch(batch.id, job.id, {
+        step: "slides_failed",
+        slidePlan,
+      });
+    }
+
+    // Image-gen failure throws normally — caller's catch flips to "failed".
+    this.patch(batch.id, job.id, {
+      step: "generating_slide_images",
+      progress: 75,
+    });
+    const slideImagePaths = await generateSlideImages({
+      jobId: job.id,
+      plan: slidePlan,
+    });
+    this.patch(batch.id, job.id, { slideImagePaths });
+    return { slidePlan, slideImagePaths };
+  }
+
+  private async runEditingTail(
+    batch: Batch,
+    job: Job,
+    input: {
+      slidePlan: SlidePlan;
+      sceneWords: WordTimestamp[][];
+      videoPaths: string[];
+      slideImagePaths: string[][];
+    },
+  ): Promise<void> {
+    try {
+      this.patch(batch.id, job.id, {
+        step: "resolving_slide_timing",
+        progress: 92,
+      });
+      const renderProps = resolveSlideTiming({
+        plan: input.slidePlan,
+        sceneWords: input.sceneWords,
+        videoPaths: input.videoPaths,
+        slideImagePaths: input.slideImagePaths,
+        baseUrl:
+          process.env.RENDER_BASE_URL ?? "http://localhost:3000",
+      });
+
+      this.patch(batch.id, job.id, {
+        step: "editing",
+        progress: 95,
+      });
+      const finalVideoPath = await renderFinal({
+        jobRenderProps: renderProps,
+        videoId: job.videoId,
+        onProgress: (progress) =>
+          this.patch(batch.id, job.id, {
+            progress: 95 + Math.round(progress * 5),
+          }),
+      });
+      this.patch(batch.id, job.id, {
+        step: "completed",
+        progress: 100,
+        finalVideoPath,
+        editError: undefined,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[queue] editing failed for job ${job.id}: ${message}`,
+      );
+      this.patch(batch.id, job.id, {
+        step: "editing_failed",
+        editError: message,
+      });
+    }
+  }
+
+  private runClaudeSerial<T>(
+    prompt: string,
+    schema: z.ZodType<T>,
+    label: string,
+  ): Promise<T> {
+    const next = this.claudeChain.then(() =>
+      spawnClaudeJson(prompt, schema, label),
+    );
     // Swallow rejections on the chain itself so one failure doesn't poison
     // subsequent gated calls; the original promise still rejects to the caller.
     this.claudeChain = next.catch(() => undefined);
