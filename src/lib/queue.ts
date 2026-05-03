@@ -141,13 +141,13 @@ export class JobQueue extends EventEmitter {
         step: "submitting_heygen",
         progress: 55,
       });
-      const heygenVideoIds = await submitHeyGen({
+      const { videoIds: heygenVideoIds, sceneWords } = await submitHeyGen({
         scenes,
         avatarId: batch.avatarId,
         voiceId: batch.voiceId,
         title: script.title,
       });
-      this.patch(batch.id, job.id, { heygenVideoIds });
+      this.patch(batch.id, job.id, { heygenVideoIds, sceneWords });
 
       this.patch(batch.id, job.id, {
         step: "polling_heygen",

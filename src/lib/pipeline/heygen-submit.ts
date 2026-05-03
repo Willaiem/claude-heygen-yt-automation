@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import type { WordTimestamp } from "@/lib/types";
+
 const TtsChunkSchema = z.object({
   audio_url: z.string().nullish(),
   sequence_number: z.number(),
@@ -30,7 +32,14 @@ interface SubmitParams {
   title?: string;
 }
 
-export async function submitHeyGen(params: SubmitParams): Promise<string[]> {
+export interface SubmitHeyGenResult {
+  videoIds: string[];
+  sceneWords: WordTimestamp[][];
+}
+
+export async function submitHeyGen(
+  params: SubmitParams,
+): Promise<SubmitHeyGenResult> {
   const cookie = process.env.HEYGEN_COOKIE;
   if (!cookie) {
     throw new Error("HEYGEN_COOKIE not configured in .env.local");
@@ -40,6 +49,7 @@ export async function submitHeyGen(params: SubmitParams): Promise<string[]> {
   }
 
   const videoIds: string[] = [];
+  const sceneWords: WordTimestamp[][] = [];
   for (let i = 0; i < params.scenes.length; i++) {
     const scene = params.scenes[i];
     const audio = await generateTts(scene, params.voiceId, cookie);
@@ -55,8 +65,9 @@ export async function submitHeyGen(params: SubmitParams): Promise<string[]> {
           : (params.title ?? "Avatar Video"),
     });
     videoIds.push(videoId);
+    sceneWords.push(audio.words);
   }
-  return videoIds;
+  return { videoIds, sceneWords };
 }
 
 interface TtsResult {
