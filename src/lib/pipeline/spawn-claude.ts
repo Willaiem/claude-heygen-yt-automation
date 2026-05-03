@@ -16,17 +16,25 @@ export const ClaudeScriptSchema = z.object({
 });
 export type ClaudeScript = z.infer<typeof ClaudeScriptSchema>;
 
-export async function spawnClaude(prompt: string): Promise<ClaudeScript> {
+export async function spawnClaudeJson<T>(
+  prompt: string,
+  schema: z.ZodType<T>,
+  label = "Claude output",
+): Promise<T> {
   const raw = await runCli(prompt);
   const inner = extractInner(raw);
   const stripped = stripFences(inner);
   try {
-    return ClaudeScriptSchema.parse(JSON.parse(stripped));
+    return schema.parse(JSON.parse(stripped));
   } catch (e) {
     throw new Error(
-      `Failed to parse Claude output as ClaudeScript: ${(e as Error).message}\n--- first 500 chars ---\n${stripped.slice(0, 500)}`,
+      `Failed to parse ${label}: ${(e as Error).message}\n--- first 500 chars ---\n${stripped.slice(0, 500)}`,
     );
   }
+}
+
+export function spawnClaude(prompt: string): Promise<ClaudeScript> {
+  return spawnClaudeJson(prompt, ClaudeScriptSchema, "ClaudeScript");
 }
 
 function runCli(prompt: string): Promise<string> {
