@@ -19,7 +19,13 @@ const STEP_LABELS: Record<PipelineStep, string> = {
   polling_heygen: "Rendering video",
   downloading_video: "Downloading video",
   generating_thumbnail: "Generating thumbnail",
+  planning_slides: "Planning slides",
+  generating_slide_images: "Generating slide images",
+  resolving_slide_timing: "Resolving slide timing",
+  editing: "Editing final video",
   completed: "Completed",
+  slides_failed: "Slides unavailable (continuing)",
+  editing_failed: "Editing failed",
   failed: "Failed",
 };
 
