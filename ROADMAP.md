@@ -545,73 +545,91 @@ Branch B finishes inside HeyGen's 5–10 min poll window, so wall-clock cost ove
 
 ### 7.1 — Schema additions (`src/lib/types.ts`)
 
-- [ ] `WordTimestampSchema` — `{ word, start, end }`
-- [ ] Extend `JobSchema`: `sceneWords?: WordTimestamp[][]`, `slidePlan?: SlidePlan`, `slideImagePaths?: string[][]`, `finalVideoPath?: string`, `editError?: string`
-- [ ] Extend `PipelineStepSchema`: `planning_slides`, `generating_slide_images`, `resolving_slide_timing`, `editing`, `slides_failed`, `editing_failed`
-- [ ] `SlideSchema` — discriminated union over the 7 slide types. Each variant extends `SlideBaseSchema` with `{ id, startPhrase, end: ({kind:"phrase", phrase} | {kind:"hold", seconds}), layout?: "pip"|"cover" }`. Per-type props: title `{ text, subtitle? }`; bullets `{ heading?, bullets[1..5] }`; stat `{ value, label }`; diagram `{ title, subtitle?, imagePrompt, callouts[], bottomCaption? }`; steps `{ title, subtitle?, steps[3]: { imagePrompt, label, caption }, footerCaption? }`; warning_grid `{ title, subtitle?, panels[4]: { imagePrompt, label, caption, boldFooter? }, footerBanner?, bottomCaption? }`; action_grid `{ title, subtitle?, actions[5..6]: { number, imagePrompt, label, description }, bottomCaption? }`
-- [ ] `SlidePlanSchema` — `{ scenes: { sceneIndex, slides: Slide[].max(8) }[] }`
-- [ ] `JobRenderPropsSchema` — fully resolved input bundle for Remotion: per-scene `{ videoUrl, durationSec, slides: Array<{ ...slideProps, startFrame, endFrame, layout, resolvedImagePaths? }> }`
+- [x] `WordTimestampSchema` — `{ word, start, end }`
+- [x] Extend `JobSchema`: `sceneWords?: WordTimestamp[][]`, `slidePlan?: SlidePlan`, `slideImagePaths?: string[][]`, `finalVideoPath?: string`, `editError?: string`
+- [x] Extend `PipelineStepSchema`: `planning_slides`, `generating_slide_images`, `resolving_slide_timing`, `editing`, `slides_failed`, `editing_failed`. Also extended `STEP_LABELS` in `ResultsTable.tsx` to keep its `Record<PipelineStep, string>` exhaustive.
+- [x] `SlideSchema` — discriminated union over the 7 slide types. Each variant extends `SlideBaseSchema` with `{ id, startPhrase, end: ({kind:"phrase", phrase} | {kind:"hold", seconds}), layout?: "pip"|"cover" }`. Per-type props: title `{ text, subtitle? }`; bullets `{ heading?, bullets[1..5] }`; stat `{ value, label }`; diagram `{ title, subtitle?, imagePrompt, callouts[{text,position}], bottomCaption? }`; steps `{ title, subtitle?, steps[3]: { imagePrompt, label, caption }, footerCaption? }`; warning_grid `{ title, subtitle?, panels[4]: { imagePrompt, label, caption, boldFooter? }, footerBanner?, bottomCaption? }`; action_grid `{ title, subtitle?, actions[5..6]: { number, imagePrompt, label, description }, bottomCaption? }`. `CalloutPositionSchema` covers 8 positions (corners + edges).
+- [x] `SlidePlanSchema` — `{ scenes: { sceneIndex, slides: Slide[].max(8) }[] }`
+- [x] `JobRenderPropsSchema` — fully resolved input bundle for Remotion: per-scene `{ videoUrl, durationSec, slides: Array<{ ...slideProps, startFrame, endFrame, layout, resolvedImagePaths? }> }`. Implementation uses `.extend(resolvedSlideFields)` (zod 4 deprecates `.merge()`) to widen each slide variant before re-discriminating.
 
 ### 7.2 — Surface `sceneWords` from HeyGen submit
 
-- [ ] `src/lib/pipeline/heygen-submit.ts` — change return type to `Promise<{ videoIds: string[]; sceneWords: WordTimestamp[][] }>`. The `generateTts` function already collects `word_timestamps`; just plumb them up
-- [ ] `src/lib/queue.ts` — update caller; `patch()` `sceneWords` onto the job alongside `heygenVideoIds`
+- [x] `src/lib/pipeline/heygen-submit.ts` — return type is now `Promise<SubmitHeyGenResult>` = `{ videoIds: string[]; sceneWords: WordTimestamp[][] }`. `generateTts` already collected `word_timestamps`; the submit loop now stashes them per scene.
+- [x] `src/lib/queue.ts` — caller destructures `{ videoIds, sceneWords }` and patches both onto the job in a single `patch()`.
 
 ### 7.3 — Slide planner
 
-- [ ] `src/lib/prompts/slide-planner.ts` — exports `buildSlidePlannerPrompt({ niche, scene, sceneIndex, sceneWords, title })`. Demands `startPhrase`/`endPhrase` be exact substrings of the scene text; ~1 slide per 15s of audio guideline; hard `max(8)` cap; niche tone from `niche.promptTone`
-- [ ] `src/lib/pipeline/plan-slides.ts` — exports `planSlides(...)`. Reuses `spawnClaude` (same stdin pipe + fence-stripping). Parses through `SlidePlanSchema`
-- [ ] In `queue.ts`, planner spawn uses the existing `runClaudeSerial` chain — no extra serialization
+- [x] `src/lib/prompts/slide-planner.ts` — exports `buildSlidePlannerPrompt({ niche, scene, sceneIndex, sceneWords, title })`. Demands `startPhrase` / `end.phrase` be exact substrings of the scene text; targets `~scene_seconds / 15` slides (clamped 1..8); hard `max(8)` cap; niche tone passed through verbatim.
+- [x] `src/lib/pipeline/plan-slides.ts` — exports `planSlides({ niche, title, scenes, sceneWords, runClaude })`. Plans one scene at a time. Each call goes through the injected `runClaude` (so the queue's existing `claudeChain` serializes them) and parses the `{ slides }` payload through a `z.array(SlideSchema).max(8)` schema.
+- [x] `src/lib/pipeline/spawn-claude.ts` — generalized: new `spawnClaudeJson<T>(prompt, schema, label)` does the runCli + extractInner + stripFences pipeline against any zod schema; the existing `spawnClaude` is now a thin wrapper that hardcodes `ClaudeScriptSchema`. Planner reuses the same code path.
+- [ ] Wire `planSlides` into `queue.ts` via the existing `claudeChain` — deferred to 7.8 (queue fork).
 
 ### 7.4 — Slide image generation
 
-- [ ] `src/lib/pipeline/generate-slide-images.ts` — collects every `imagePrompt`, fires fal.ai calls via `Promise.all`. Reuses auth pattern from `generate-thumbnail.ts` (no `image_urls`, this is text-to-image not edit). Saves to `output/slide-images/{jobId}/{sceneIdx}_{slideIdx}_{panelIdx}.png`
-- [ ] Per-type `image_size`: diagram `{ width: 1536, height: 1024 }`, grid panels `{ width: 1024, height: 1024 }`
-- [ ] Partial failure here is a hard fail (broken slides look worse than no slides)
+- [x] `src/lib/pipeline/generate-slide-images.ts` — `collectTasks()` flattens the plan into one task per panel (diagram=1, steps=3, warning_grid=4, action_grid=5–6, title/bullets/stat=0); `Promise.all` fires every fal.ai text-to-image call (no `image_urls` — pure t2i, not edit). Saves to `output/slide-images/{jobId}/{sceneIdx}_{slideIdx}_{panelIdx}.png`. Returns `string[][]` keyed by sceneIndex (per-slide grouping happens in 7.5 since this layer doesn't carry slide structure).
+- [x] Per-type `image_size`: diagram `{ width: 1536, height: 1024 }`, all grid/steps panels `{ width: 1024, height: 1024 }` (chosen at task-collect time per `slide.type`).
+- [x] Partial failure here is a hard fail — `Promise.all` rejects on the first error, kicking the job to `failed` (no broken-slide fallback by design).
 
 ### 7.5 — Slide timing resolver
 
-- [ ] `src/lib/pipeline/resolve-slide-timing.ts` — given a slide's `{ startPhrase, end }` + scene's `WordTimestamp[]`, return `{ startFrame, endFrame }` at fps 30. Algorithm: lowercase + strip punctuation; sliding-window match; pick earliest. If `end.kind === "hold"`, `endFrame = startFrame + Math.round(end.seconds * 30)`. If unmatched, fall back to scene midpoint with logged warning (not a failure)
-- [ ] Build full `JobRenderProps` here too (each scene's `videoUrl` from `/api/file?path=...`, `durationSec` from the scene's last word's `end`)
+- [x] `src/lib/pipeline/resolve-slide-timing.ts` — `resolveSlideTiming({ plan, sceneWords, videoPaths, slideImagePaths, baseUrl })`. Sliding-window match against `normalizeWord` (lowercase + strip non-letter/digit, Unicode-aware) on the scene's `WordTimestamp[]`. `end.kind === "hold"` adds `seconds` to the resolved start; `end.kind === "phrase"` re-runs the matcher on `end.phrase` and falls back to `start + 5s` (clamped to scene duration). If `startPhrase` doesn't match, falls back to scene midpoint with a `console.warn` (per roadmap: warning, not a failure).
+- [x] Builds full `JobRenderProps` — `videoUrl` from `${baseUrl}/api/file?path=<encoded abs path>`, `durationSec` from the scene's last word's `end`. Resolved slides carry `layout` defaulted from `DEFAULT_LAYOUT_BY_TYPE` (steps→pip, warning_grid/action_grid→cover, others→pip) and `resolvedImagePaths` sliced from the flat per-scene image array using each slide's panel count (diagram=1, steps/warning_grid/action_grid = N, text-only = none).
 
 ### 7.6 — Remotion components (under `src/remotion/`)
 
-- [ ] `theme.ts` — single unified theme (navy `#0e2a4d`, light-blue bg `#cfe7f5`, red accent `#d83a3a`, Inter stack)
-- [ ] `slides/_primitives.tsx` — `<HeaderBar>`, `<FooterCaption>`, `<PanelCard>`, `<SirenBadge>`, `<NumberedBadge>`, `<CalloutPill>`, `<EnterExit>` (200ms fade+slide-up enter, 150ms fade-out exit)
-- [ ] `slides/TitleSlide.tsx`
-- [ ] `slides/BulletsSlide.tsx`
-- [ ] `slides/StatSlide.tsx`
-- [ ] `slides/DiagramSlide.tsx` — central `<Img>` with absolute-positioned `<CalloutPill>`s by `position` enum
-- [ ] `slides/StepsSlide.tsx` — 3 panels horizontal with arrow connectors
-- [ ] `slides/WarningGridSlide.tsx` — 4-panel emergency grid
-- [ ] `slides/ActionGridSlide.tsx` — N-panel numbered grid
-- [ ] `slides/{Type}SlideDesign.tsx` — Studio-only wrappers with rich `defaultProps` for visual iteration without running the pipeline
-- [ ] `avatar/AvatarLayer.tsx` — avatar `<OffthreadVideo>` + PIP/cover toggle (PIP: top-right circle, ~18% width; Cover: layer hidden for slide's frame range)
-- [ ] `compositions/JobComposition.tsx` — receives `JobRenderProps`. One `<Sequence from={cumulativeFrames}>` per scene; inside each, `<AvatarLayer>` + scene's slides positioned by resolved `startFrame`/`endFrame`. Uses `calculateMetadata` for dynamic `durationInFrames`
-- [ ] `compositions/JobPreview.tsx` — wrapper passing `fixtures/sample-job.ts` data into `JobComposition`
-- [ ] `fixtures/sample-job.ts` — hand-built `JobRenderProps`, one scene + two slides, points at a local test MP4
-- [ ] `Root.tsx` — registers `JobComposition` (production), `JobPreview`, and the 7 `SlideDesign` comps
+- [x] `theme.ts` — single unified palette (`navy` `#0e2a4d`, `skyBg` `#cfe7f5`, `accent` `#d83a3a`, Inter stack), plus shared `fps`/`width`/`height`/`pip` constants used by `Root.tsx` and `JobComposition`.
+- [x] `slides/_primitives.tsx` — `<HeaderBar>`, `<FooterCaption>`, `<PanelCard>`, `<SirenBadge>`, `<NumberedBadge>`, `<CalloutPill>` (positioned via `calloutStyleByPosition` for all 8 `CalloutPosition` enum values), `<EnterExit>` (200ms fade+slide-up enter, 150ms fade-out exit, frames derived from `useVideoConfig().fps`).
+- [x] `slides/SlideBackground.tsx` — small wrapper used by every slide so background colour + 80px padding are consistent.
+- [x] `slides/TitleSlide.tsx`
+- [x] `slides/BulletsSlide.tsx`
+- [x] `slides/StatSlide.tsx`
+- [x] `slides/DiagramSlide.tsx` — central `<Img>` with absolute-positioned `<CalloutPill>`s by `position` enum. Falls back to a dashed placeholder when `imageSrc` is missing (Studio defaults).
+- [x] `slides/StepsSlide.tsx` — 3 panels horizontal with arrow connectors.
+- [x] `slides/WarningGridSlide.tsx` — 4-panel emergency grid with siren badge + optional footer banner.
+- [x] `slides/ActionGridSlide.tsx` — N-panel numbered grid (5-up if 5 actions, 3-cols if 6 — gridTemplateColumns dynamic).
+- [x] `slides/SlideRenderer.tsx` — switches over `ResolvedSlide.type` and adapts plan-shape data into per-slide presentation props (slices `resolvedImagePaths` per panel index).
+- [x] `slides/design-defaults.ts` — Studio default props for all 7 design comps. Replaces the planned-but-unnecessary `{Type}SlideDesign.tsx` wrappers — Root just registers each slide component directly with these defaults; no extra wrapper files needed.
+- [x] `avatar/AvatarLayer.tsx` — single `<OffthreadVideo>` whose style flips per current frame: full (default), `pip` (top-right circle, 18% width, white border, drop shadow), or `cover` (1×1 px + opacity 0 so the video keeps its audio while being visually hidden).
+- [x] `compositions/JobComposition.tsx` — receives `JobRenderProps`. One `<Sequence from={cumulativeFrames}>` per scene (premounted 1s); inside each, `<AvatarLayer>` + a `<Sequence>` per slide using resolved `startFrame`/`endFrame`. Exports `calculateJobCompositionMetadata` (sums scene durations × fps) for dynamic `durationInFrames` + width/height/fps from `theme`.
+- [x] `fixtures/sample-job.ts` — hand-built `JobRenderProps` pointing at a public Big-Buck-Bunny MP4 with two slides (cover title → pip bullets) so Studio renders without any local files.
+- [x] `Root.tsx` — registers `JobComposition`, `JobPreview` (same comp + sample fixture), and 7 design comps inside a `<Folder name="SlideDesigns">`. Drops the legacy HelloWorld registrations now that JobComposition is the smoke test.
+- [x] Slide props use `Type & Record<string, unknown>` so they satisfy Remotion's `LooseComponentType` constraint without needing per-slide zod schemas; defaults still keep their precise types via `satisfies` at the design-defaults boundary.
 
 ### 7.7 — Render orchestration
 
-- [ ] `src/lib/pipeline/render-final.ts` — exports `renderFinal({ jobRenderProps, videoId, onProgress })`. First call: `bundle({ entryPoint: 'src/remotion/index.ts' })`, cache served URL on `globalThis.__remotionBundle`. Then `selectComposition` + `renderMedia({ codec: 'h264', crf: 18, fps: 30, outputLocation: 'output/final/{videoId}.mp4', onProgress })`. Also writes `output/final/{videoId}.props.json` next to the MP4 (debug fixture — copy into `fixtures/sample-job.ts` to reproduce in Studio)
-- [ ] `onProgress({ progress })` calls `patch(batchId, jobId, { progress: 95 + Math.round(progress * 5) })` for live render percentage in SSE
+- [x] `src/lib/pipeline/render-final.ts` — exports `renderFinal({ jobRenderProps, videoId, onProgress })`. First call lazily kicks `bundle({ entryPoint: src/remotion/index.ts })` and caches the resulting `serveUrl` Promise on `globalThis.__remotionBundle` so subsequent renders reuse the same bundle (and Chromium download). Then `selectComposition({ id: "JobComposition", inputProps })` → `renderMedia({ codec: "h264", crf: 18, outputLocation: output/final/{videoId}.mp4, inputProps, onProgress })`. Also `writeFile`s `output/final/{videoId}.props.json` next to the MP4 (debug fixture — copy into `fixtures/sample-job.ts` to reproduce in Studio).
+- [x] `onProgress` is wired through as a thin adapter: `({ progress }) => params.onProgress(progress)`. Queue's wrapper maps `progress ∈ [0,1]` to job `progress = 95 + Math.round(progress * 5)` for live render percentage in SSE (queue integration in 7.8).
 
 ### 7.8 — Queue integration
 
-- [ ] `src/lib/queue.ts` — extend `runJob` with the two-branch fork after `splitting_scenes`. Branch A: `submitting_heygen` → `polling_heygen` → `downloading_video` → `generating_thumbnail` (existing path, plus emitting `sceneWords`). Branch B (new): `planning_slides` → `generating_slide_images`. Join with `Promise.all`. Then sequential: `resolving_slide_timing` → `editing`
-- [ ] Hybrid failure handling: try/catch around branch B's planner — on failure, emit `slides_failed`, set `slidePlan = { scenes: scenes.map((_, i) => ({ sceneIndex: i, slides: [] })) }`, continue. Image-gen failure throws normally → job `failed`. Wrap `renderFinal` in its own try/catch — on failure, set `step: editing_failed` + `editError`, leave job NOT marked `failed`
-- [ ] Add `reeditJob(batchId, jobId)` — re-runs only `resolving_slide_timing` + `editing`. Mirrors `resubmitJob` (resets step, re-emits `batch_complete` on settle)
+- [x] `src/lib/queue.ts` — `runJob` does the linear pre-fork (`fetching_transcript` → `fetching_thumbnail` → `generating_script` → `splitting_scenes` → `submitting_heygen`, with the latter now also emitting `sceneWords`), then `Promise.all([runBranchA, runBranchB])`, then `runEditingTail`. Branch A is `polling_heygen` → `downloading_video` → `generating_thumbnail`; Branch B is `planning_slides` → `generating_slide_images`. Editing tail is `resolving_slide_timing` → `editing`. Both branches `patch()` step + progress as they run; the dominant signal is whichever was most recently patched (the user typically sees branch A's longer steps).
+- [x] Hybrid failure handling — branch B wraps the planner spawn in try/catch; on failure it logs, sets `step: "slides_failed"` and writes a `slidePlan` with empty `slides[]` per scene so downstream image-gen + render still produce a "bare-stitch" final video. Image-gen failure throws normally → caller's catch flips the job to `failed`. The editing tail wraps `resolveSlideTiming` + `renderFinal` in its own try/catch — on failure it sets `step: "editing_failed"` + `editError` and does NOT mark the job `failed`, leaving per-scene MP4s + thumbnail usable in the UI.
+- [x] `reeditJob(batchId, jobId)` — re-runs only the editing tail. Validates that the job still has `slidePlan` / `sceneWords` / `videoPaths` / `slideImagePaths` (throws if any are missing), resets `step` + clears `editError`, then re-fires `runEditingTail`. Mirrors `resubmitJob`'s `batch_complete` re-emit pattern so SSE closes cleanly after the retry.
+- [x] `runClaudeSerial` is now generic — `<T>(prompt, schema, label) => Promise<T>` so both the script generator (`ClaudeScriptSchema`) and the planner (`z.array(SlideSchema).max(8)`) gate through the same `claudeChain` with full type-safety.
+- [x] Render base URL — `process.env.RENDER_BASE_URL ?? "http://localhost:3000"`. Set this when the dev server is on a non-default port; Remotion's Chromium fetches video + slide PNGs from `${baseUrl}/api/file?path=…`.
 
 ### 7.9 — Server action + UI
 
-- [ ] `src/app/actions.ts` — add `reedit(batchId, jobId)` mirroring `resubmit()`
-- [ ] `src/components/ResultsTable.tsx` — render Final-video download link via `/api/file?path=output/final/{videoId}.mp4&download=1` when `Job.finalVideoPath` set; render `Re-edit` button when `Job.step === "editing_failed"`; display `Job.editError` distinctly from `Job.error`
-- [ ] No changes needed to `useSSE.ts` — `SSEEventSchema.data` is `JobSchema.partial()`, new fields propagate automatically
+- [x] `src/app/actions.ts` — `reedit({ batchId, jobId })` is a thin wrapper over `queue.reeditJob`, mirroring `resubmit`.
+- [x] `src/components/ResultsTable.tsx` — Final-video download link (emerald) renders whenever `job.finalVideoPath` is set, distinct from the per-scene "Scene" download (blue). `Re-edit` button (orange) renders when `job.step === "editing_failed"`, with disabled→"Re-editing…" while the action is in flight. `editError` shows under the status as orange `Edit: …` text — visually distinct from the red `error` shown for hard failures. Status colour now distinguishes `editing_failed` (orange), `slides_failed` (amber), `failed` (red), `completed` (green).
+- [x] `src/app/page.tsx` — added `reeditingIds` state + `handleReedit` handler that mirrors `handleRetry` (clears error, tracks ids, bumps `subscriptionKey` to reopen SSE). Both passed through to ResultsTable.
+- [x] No changes needed to `useSSE.ts` — `SSEEventSchema.data` is `JobSchema.partial()`, new fields (`finalVideoPath`, `editError`, `slidePlan`, `slideImagePaths`, `sceneWords`) propagate automatically.
 
 ### 7.10 — Documentation
 
-- [ ] Update `CLAUDE.md` Architecture/Pipeline section: extend per-URL pipeline list with slide planner + image gen + resolve timing + Remotion render. Add "Remotion editing" subsection under Non-obvious conventions covering `JobRenderProps` schema, props.json debug-dump, two-branch parallelism
+- [x] Update `CLAUDE.md` Architecture/Pipeline section — per-URL pipeline list now describes the two-branch fork (Branch A: poll/download/thumbnail, Branch B: planner/image-gen) joining into resolve-timing + Remotion render. Orchestration section explains generic `runClaudeSerial<T>` and the join pattern. New **Remotion editing** subsection under Non-obvious conventions covers: cached `globalThis.__remotionBundle`, `${baseUrl}/api/file?path=…` URL convention + `RENDER_BASE_URL` env, `props.json` debug-dump, hybrid failure handling, slide-discriminated-union shape + per-panel image flattening, and per-frame `AvatarLayer` layout. **Shared types** section now lists `Slide`, `SlidePlan`, and `JobRenderProps`. Workflow section explicitly calls out updating ROADMAP per sub-phase (not at end of phase).
+- [x] `npx tsc --noEmit` passes for the entire repo (no remotion exclusion). `npm run lint` requires interactive ESLint config setup (Next 16 deprecation), unchanged from before Phase 7 — not regressed.
+
+### Phase 7 — verification status
+
+End-to-end runtime verification (steps 4–8 of the original Phase 7 plan) requires real HeyGen + fal.ai + Claude credentials and ≥10 min of wall-clock time per sample URL, so was deferred. What was verified:
+
+- [x] `npx tsc --noEmit` — clean across the entire repo, including `src/remotion/` and the new pipeline modules.
+- [x] `JobRenderProps` round-trips through `JobRenderPropsSchema.parse` in `calculateJobCompositionMetadata` — schema doubles as runtime guard for the props bundle.
+- [x] Sample fixture (`src/remotion/fixtures/sample-job.ts`) points at a public Big-Buck-Bunny MP4 so `npm run remotion:studio` can preview `JobPreview` without any local files.
+- [ ] Live single-URL run end-to-end — pending real run.
+- [ ] Live planner-failure + Re-edit flows — pending real run.
+- [ ] Live 3-URL batch wall-clock measurement — pending real run.
 
 ### Patterns to reuse (don't reimplement)
 

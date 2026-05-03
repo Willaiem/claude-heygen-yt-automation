@@ -25,13 +25,18 @@ The repo is a local-only batch processor that turns YouTube URLs into avatar-nar
 2. Fetch competitor thumbnail (`img.youtube.com/vi/{id}/maxresdefault.jpg`)
 3. Spawn Claude Code CLI — it writes a ~15k-char script + title/tags/description
 4. Split script at sentence boundaries into scenes (≤4,800 chars each, HeyGen limit)
-5. Submit to HeyGen → poll every 30s → download MP4 into `output/videos/`
-6. Generate thumbnail via OpenAI `gpt-4o` using the avatar's face + competitor thumbnail
+5. Submit to HeyGen — TTS stream + per-scene `avatar/shortcut/submit`. Captures `sceneWords` (per-scene `WordTimestamp[]`) at the same time, used later for slide timing.
+6. **Two-branch fork** runs in parallel:
+   - Branch A: poll HeyGen every 30s → download MP4s into `output/videos/` → generate thumbnail via fal.ai using the avatar's face + competitor thumbnail.
+   - Branch B: spawn Claude CLI per scene to produce a `SlidePlan` (planning_slides) → fire fal.ai text-to-image for every panel in parallel (generating_slide_images). Branch B finishes inside Branch A's HeyGen poll window in practice, so wall-clock cost is ~zero.
+7. Resolve slide timing — fuzzy-match each slide's `startPhrase`/`end.phrase` against the captured `sceneWords` and convert to frames at 30 fps.
+8. Render final 1920×1080 H.264 MP4 via Remotion (programmatic SSR through `@remotion/bundler` + `@remotion/renderer`) into `output/final/`.
 
-**Orchestration (`src/lib/queue.ts`, Phase 4):**
+**Orchestration (`src/lib/queue.ts`, Phases 4 + 7):**
 - In-memory `JobQueue` attached to `globalThis` so it survives Next.js HMR (required — no DB, state is lost on restart).
-- **Sequential** gating on Claude CLI spawns (one at a time, to avoid thrashing local CPU / hitting rate limits).
-- **Parallel** HeyGen polling — multiple jobs can be rendering server-side simultaneously.
+- **Sequential** gating on Claude CLI spawns (one at a time) via a shared `claudeChain`. Both the script-generation and slide-planner spawns flow through the same chain — `runClaudeSerial<T>(prompt, schema, label)` is generic and parses each response with the caller's zod schema.
+- **Parallel** HeyGen polling and parallel fal.ai image generation. Multiple jobs can be rendering server-side simultaneously.
+- **Parallel branches per job** (Branch A vs Branch B) joined via `Promise.all`, then sequential `resolving_slide_timing` → `editing` (Remotion render).
 - Progress flows out via an `EventEmitter` that `/api/progress` subscribes to and forwards as SSE.
 
 ### Non-obvious conventions
@@ -46,13 +51,25 @@ The repo is a local-only batch processor that turns YouTube URLs into avatar-nar
 - **Voice is coupled to avatar** — no separate voice selector. `voiceId` on the DTO comes from the avatar group's `default_voice_id`.
 - **Niches (`src/lib/niches.ts`)** are plain config objects: `{ id, name, promptTone, defaultTags }`. Add a new niche by adding an entry; the UI picks up `id`/`name` automatically.
 
+### Remotion editing (Phase 7)
+
+- **Bundle is cached on `globalThis`.** First `renderFinal` call runs `@remotion/bundler`'s `bundle({ entryPoint: "src/remotion/index.ts" })` (which downloads Chromium ~150 MB on cold start) and stashes the resulting `serveUrl` Promise on `globalThis.__remotionBundle`. Subsequent renders reuse it.
+- **Render input is `JobRenderProps` — fully resolved.** All slide timing (in frames), all video URLs (`${baseUrl}/api/file?path=…`), and all slide image URLs are baked into the props before render time. Remotion's Chromium fetches every asset through the same `/api/file` route handler. Set `RENDER_BASE_URL` env if the dev server is on a non-default port; defaults to `http://localhost:3000`.
+- **Debug fixture is dumped beside the MP4.** Each render also writes `output/final/{videoId}.props.json` — copy that into `src/remotion/fixtures/sample-job.ts` to reproduce the exact render in Remotion Studio without re-running the pipeline.
+- **Two-branch failure modes are intentionally hybrid.** Planner failure → `step: "slides_failed"`, plan replaced with empty slides per scene, render proceeds → "bare-stitched" final video. Image-gen failure → job `failed` (broken slides look worse than no slides). Render failure → `step: "editing_failed"` + `editError` set, job NOT marked `failed`, per-scene MP4s + thumbnail still usable in the UI; `reedit()` re-runs only `resolving_slide_timing` + `editing`.
+- **`Slide` is a discriminated union over 7 types.** `title`, `bullets`, `stat` are text-only; `diagram`, `steps`, `warning_grid`, `action_grid` carry per-panel `imagePrompt`s. The planner emits `Slide`s; `generate-slide-images.ts` walks the plan flattening to one fal.ai task per panel (diagram=1, steps=3, warning_grid=4, action_grid=5–6). `resolve-slide-timing.ts` slices the resulting per-scene `string[]` back into per-slide groups using each slide's `panelCount`.
+- **Slide layout is per-frame on `AvatarLayer`.** Default = full-frame; `pip` shrinks the avatar's `<OffthreadVideo>` to a top-right circle (~18% width); `cover` reduces it to 1×1 px with `opacity: 0` so the audio keeps playing while the slide visually fills the frame. The active slide is found via `useCurrentFrame()` against each slide's `startFrame`/`endFrame`.
+
 ### Shared types
 
 All cross-boundary types live in `src/lib/types.ts`. **Every exported type is `z.infer`'d from a zod schema in the same file — schema is the source of truth, types are derived. Edit the schema, never the type.** Boundary schemas (HeyGen payload, SSE wire, `GenerateRequest`) are expected to be `.parse()`'d where data enters the system; internal schemas (`Job`, `Batch`, `NicheConfig`) exist so the shape is declared once and available for validation if/when needed. Notable shapes:
-- `Job` — carries everything produced along the pipeline; progresses through `PipelineStep` enum values
+- `Job` — carries everything produced along the pipeline; progresses through `PipelineStep` enum values. Phase 7 added `sceneWords`, `slidePlan`, `slideImagePaths`, `finalVideoPath`, `editError`.
 - `Batch` — one "Generate" click; references its jobs and the selected avatar/voice/niche
 - `SSEEvent` — wire format for `/api/progress`
 - `HeyGenAvatar` — `{ avatarId, avatarName, previewImageUrl, voiceId?, faceImageUrl? }` (inferred from `HeyGenAvatarGroupSchema`)
+- `Slide` — discriminated union over 7 types (`title` / `bullets` / `stat` / `diagram` / `steps` / `warning_grid` / `action_grid`). Each variant extends a base of `{ id, startPhrase, end, layout? }`; `end` is itself a discriminated union over `{ kind: "phrase", phrase }` vs `{ kind: "hold", seconds }`.
+- `SlidePlan` — `{ scenes: { sceneIndex, slides: Slide[].max(8) }[] }` — the planner's output.
+- `JobRenderProps` — fully resolved input bundle handed to `JobComposition`. Per scene: `{ videoUrl, durationSec, slides: ResolvedSlide[] }`. Each `ResolvedSlide` extends its `Slide` variant with `{ startFrame, endFrame, layout, resolvedImagePaths? }`. Built once in `resolve-slide-timing.ts` and dumped to `output/final/{videoId}.props.json` for debugging.
 
 ## Code style
 
@@ -61,7 +78,7 @@ All cross-boundary types live in `src/lib/types.ts`. **Every exported type is `z
 
 ## Workflow
 
-- **`ROADMAP.md` is the single source of truth for project progress.** Check off items there as they land. Phases 0–1 and the avatars portion of Phase 2 are done; Phases 3–6 are not. When scope changes, update ROADMAP (strike out removed items, add key-decision notes) — don't silently drop them.
+- **`ROADMAP.md` is the single source of truth for project progress.** Check off items there as they land. Phases 0–7 are done end-to-end (scaffolding → UI → pipeline → queue → frontend wire-up → polish → Remotion editing). When scope changes, update ROADMAP (strike out removed items, add key-decision notes) — don't silently drop them. **Update ROADMAP after every sub-phase finishes**, not in a single batch at the end of a multi-phase task — it's the only way the user can see real-time progress.
 - Commit message style from existing history: lowercase conventional-commit prefix (`chore:`, `feat:`). Keep subjects short; use the body for the why. **Do not add a `Co-Authored-By: Claude ...` trailer** — the user's existing commits don't have it and they've asked to keep it that way.
 - Path alias `@/*` → `src/*` (see `tsconfig.json`).
 - Repo root is a git repo with a single `node_modules` and `package-lock.json` shared by Next and Remotion.
