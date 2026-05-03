@@ -1,47 +1,117 @@
 import "./index.css";
-import { Composition } from "remotion";
-import { HelloWorld, myCompSchema } from "./HelloWorld";
-import { Logo, myCompSchema2 } from "./HelloWorld/Logo";
+import { Composition, Folder } from "remotion";
 
-// Each <Composition> is an entry in the sidebar!
+import {
+  JobComposition,
+  calculateJobCompositionMetadata,
+} from "./compositions/JobComposition";
+import { sampleJobRenderProps } from "./fixtures/sample-job";
+import { ActionGridSlide } from "./slides/ActionGridSlide";
+import { BulletsSlide } from "./slides/BulletsSlide";
+import { DiagramSlide } from "./slides/DiagramSlide";
+import { StatSlide } from "./slides/StatSlide";
+import { StepsSlide } from "./slides/StepsSlide";
+import { TitleSlide } from "./slides/TitleSlide";
+import { WarningGridSlide } from "./slides/WarningGridSlide";
+import {
+  actionGridDefaults,
+  bulletsDefaults,
+  diagramDefaults,
+  statDefaults,
+  stepsDefaults,
+  titleDefaults,
+  warningGridDefaults,
+} from "./slides/design-defaults";
+import { theme } from "./theme";
 
 export const RemotionRoot: React.FC = () => {
   return (
     <>
       <Composition
-        // You can take the "id" to render a video:
-        // npx remotion render HelloWorld
-        id="HelloWorld"
-        component={HelloWorld}
-        durationInFrames={150}
-        fps={30}
-        width={1920}
-        height={1080}
-        // You can override these props for each render:
-        // https://www.remotion.dev/docs/parametrized-rendering
-        schema={myCompSchema}
-        defaultProps={{
-          titleText: "Welcome to Remotion",
-          titleColor: "#000000",
-          logoColor1: "#91EAE4",
-          logoColor2: "#86A8E7",
-        }}
+        id="JobComposition"
+        component={JobComposition}
+        durationInFrames={1}
+        fps={theme.fps}
+        width={theme.width}
+        height={theme.height}
+        defaultProps={sampleJobRenderProps}
+        calculateMetadata={calculateJobCompositionMetadata}
       />
-
-      {/* Mount any React component to make it show up in the sidebar and work on it individually! */}
       <Composition
-        id="OnlyLogo"
-        component={Logo}
-        durationInFrames={150}
-        fps={30}
-        width={1920}
-        height={1080}
-        schema={myCompSchema2}
-        defaultProps={{
-          logoColor1: "#91dAE2" as const,
-          logoColor2: "#86A8E7" as const,
-        }}
+        id="JobPreview"
+        component={JobComposition}
+        durationInFrames={1}
+        fps={theme.fps}
+        width={theme.width}
+        height={theme.height}
+        defaultProps={sampleJobRenderProps}
+        calculateMetadata={calculateJobCompositionMetadata}
       />
+      <Folder name="SlideDesigns">
+        <Composition
+          id="TitleSlideDesign"
+          component={TitleSlide}
+          durationInFrames={titleDefaults.durationInFrames}
+          fps={theme.fps}
+          width={theme.width}
+          height={theme.height}
+          defaultProps={titleDefaults}
+        />
+        <Composition
+          id="BulletsSlideDesign"
+          component={BulletsSlide}
+          durationInFrames={bulletsDefaults.durationInFrames}
+          fps={theme.fps}
+          width={theme.width}
+          height={theme.height}
+          defaultProps={bulletsDefaults}
+        />
+        <Composition
+          id="StatSlideDesign"
+          component={StatSlide}
+          durationInFrames={statDefaults.durationInFrames}
+          fps={theme.fps}
+          width={theme.width}
+          height={theme.height}
+          defaultProps={statDefaults}
+        />
+        <Composition
+          id="DiagramSlideDesign"
+          component={DiagramSlide}
+          durationInFrames={diagramDefaults.durationInFrames}
+          fps={theme.fps}
+          width={theme.width}
+          height={theme.height}
+          defaultProps={diagramDefaults}
+        />
+        <Composition
+          id="StepsSlideDesign"
+          component={StepsSlide}
+          durationInFrames={stepsDefaults.durationInFrames}
+          fps={theme.fps}
+          width={theme.width}
+          height={theme.height}
+          defaultProps={stepsDefaults}
+        />
+        <Composition
+          id="WarningGridSlideDesign"
+          component={WarningGridSlide}
+          durationInFrames={warningGridDefaults.durationInFrames}
+          fps={theme.fps}
+          width={theme.width}
+          height={theme.height}
+          defaultProps={warningGridDefaults}
+        />
+        <Composition
+          id="ActionGridSlideDesign"
+          component={ActionGridSlide}
+          durationInFrames={actionGridDefaults.durationInFrames}
+          fps={theme.fps}
+          width={theme.width}
+          height={theme.height}
+          defaultProps={actionGridDefaults}
+        />
+      </Folder>
     </>
   );
 };
