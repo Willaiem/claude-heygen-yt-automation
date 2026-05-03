@@ -8,6 +8,7 @@ import {
 } from "@remotion/renderer";
 
 import type { JobRenderProps } from "@/lib/types";
+import { withProjectConfig } from "@/remotion/webpack-override";
 
 const COMPOSITION_ID = "JobComposition";
 const FINAL_DIR = join(process.cwd(), "output", "final");
@@ -22,7 +23,7 @@ function getBundle(): Promise<string> {
   if (!cached.__remotionBundle) {
     cached.__remotionBundle = bundle({
       entryPoint: join(process.cwd(), "src", "remotion", "index.ts"),
-      webpackOverride: (config) => config,
+      webpackOverride: withProjectConfig,
     });
   }
   return cached.__remotionBundle;
