@@ -7,6 +7,8 @@ interface Props {
   jobs: Job[];
   onRetry?: (jobId: string) => void;
   retryingIds?: Set<string>;
+  onReedit?: (jobId: string) => void;
+  reeditingIds?: Set<string>;
 }
 
 const STEP_LABELS: Record<PipelineStep, string> = {
@@ -29,7 +31,13 @@ const STEP_LABELS: Record<PipelineStep, string> = {
   failed: "Failed",
 };
 
-export function ResultsTable({ jobs, onRetry, retryingIds }: Props) {
+export function ResultsTable({
+  jobs,
+  onRetry,
+  retryingIds,
+  onReedit,
+  reeditingIds,
+}: Props) {
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -85,15 +93,22 @@ export function ResultsTable({ jobs, onRetry, retryingIds }: Props) {
                         ? "text-green-400"
                         : job.step === "failed"
                           ? "text-red-400"
-                          : "text-yellow-400"
+                          : job.step === "editing_failed"
+                            ? "text-orange-400"
+                            : job.step === "slides_failed"
+                              ? "text-amber-400"
+                              : "text-yellow-400"
                     }`}
                   >
-                    {job.step !== "completed" && job.step !== "failed" && (
-                      <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
-                    )}
+                    {job.step !== "completed" &&
+                      job.step !== "failed" &&
+                      job.step !== "editing_failed" && (
+                        <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+                      )}
                     {STEP_LABELS[job.step]}
                     {job.step !== "completed" &&
                       job.step !== "failed" &&
+                      job.step !== "editing_failed" &&
                       job.step !== "queued" && (
                         <span className="text-zinc-500">{job.progress}%</span>
                       )}
@@ -104,6 +119,14 @@ export function ResultsTable({ jobs, onRetry, retryingIds }: Props) {
                       title={job.error}
                     >
                       {job.error}
+                    </span>
+                  )}
+                  {job.step === "editing_failed" && job.editError && (
+                    <span
+                      className="max-w-xs truncate text-[10px] text-orange-300/80"
+                      title={job.editError}
+                    >
+                      Edit: {job.editError}
                     </span>
                   )}
                 </div>
@@ -151,14 +174,22 @@ export function ResultsTable({ jobs, onRetry, retryingIds }: Props) {
                       Desc
                     </button>
                   )}
+                  {job.finalVideoPath && (
+                    <a
+                      href={`/api/file?path=${encodeURIComponent(job.finalVideoPath)}&download=1`}
+                      className="rounded border border-emerald-500/40 px-2 py-1 text-xs text-emerald-300 hover:border-emerald-400"
+                    >
+                      Final
+                    </a>
+                  )}
                   {job.videoPaths?.[0] && (
                     <a
                       href={`/api/file?path=${encodeURIComponent(job.videoPaths[0])}&download=1`}
                       className="rounded border border-zinc-700 px-2 py-1 text-xs text-blue-400 hover:border-blue-500"
                     >
                       {job.videoPaths.length > 1
-                        ? `Download (1/${job.videoPaths.length})`
-                        : "Download"}
+                        ? `Scene (1/${job.videoPaths.length})`
+                        : "Scene"}
                     </a>
                   )}
                   {job.step === "failed" && onRetry && (
@@ -169,6 +200,16 @@ export function ResultsTable({ jobs, onRetry, retryingIds }: Props) {
                       className="rounded border border-red-500/40 px-2 py-1 text-xs text-red-300 hover:border-red-400 disabled:opacity-50"
                     >
                       {retryingIds?.has(job.id) ? "Retrying…" : "Retry"}
+                    </button>
+                  )}
+                  {job.step === "editing_failed" && onReedit && (
+                    <button
+                      type="button"
+                      onClick={() => onReedit(job.id)}
+                      disabled={reeditingIds?.has(job.id)}
+                      className="rounded border border-orange-500/40 px-2 py-1 text-xs text-orange-300 hover:border-orange-400 disabled:opacity-50"
+                    >
+                      {reeditingIds?.has(job.id) ? "Re-editing…" : "Re-edit"}
                     </button>
                   )}
                 </div>

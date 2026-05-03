@@ -91,3 +91,10 @@ export async function resubmit(input: {
 }): Promise<void> {
   getQueue().resubmitJob(input.batchId, input.jobId);
 }
+
+export async function reedit(input: {
+  batchId: string;
+  jobId: string;
+}): Promise<void> {
+  getQueue().reeditJob(input.batchId, input.jobId);
+}

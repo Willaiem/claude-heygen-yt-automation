@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { generate, resubmit } from "@/app/actions";
+import { generate, reedit, resubmit } from "@/app/actions";
 import { AvatarSelector } from "@/components/AvatarSelector";
 import { NicheSelector } from "@/components/NicheSelector";
 import { ResultsTable } from "@/components/ResultsTable";
@@ -21,6 +21,7 @@ export default function Home() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
+  const [reeditingIds, setReeditingIds] = useState<Set<string>>(new Set());
 
   const { jobs, isComplete } = useSSE(batchId, seedJobs, subscriptionKey);
   const isRunning = batchId !== null && !isComplete;
@@ -73,6 +74,28 @@ export default function Home() {
     }
   };
 
+  const handleReedit = async (jobId: string) => {
+    if (!batchId) return;
+    setError(null);
+    setReeditingIds((prev) => {
+      const next = new Set(prev);
+      next.add(jobId);
+      return next;
+    });
+    try {
+      await reedit({ batchId, jobId });
+      setSubscriptionKey((value) => value + 1);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setReeditingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(jobId);
+        return next;
+      });
+    }
+  };
+
   const canGenerate = Boolean(selectedAvatar?.voiceId);
   const generateLabel = isSubmitting
     ? "Submitting…"
@@ -110,6 +133,8 @@ export default function Home() {
           jobs={jobs}
           onRetry={handleRetry}
           retryingIds={retryingIds}
+          onReedit={handleReedit}
+          reeditingIds={reeditingIds}
         />
       </section>
     </main>
